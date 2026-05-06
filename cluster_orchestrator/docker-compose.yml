@@ -290,6 +290,24 @@ services:
       - "11203"
     logging: *default-logging
 
+  worker:
+    build:
+      context: ../go_node_engine/
+      args:
+        NETMANAGER_VERSION: ${OAKESTRA_VERSION:-v0.4.410}
+    image: oakestra_worker
+    privileged: true
+    environment:
+      - CLUSTER_ADDRESS=cluster_manager
+      - CLUSTER_PORT=10100
+      - MQTT_URL=mqtt
+      - MQTT_PORT=10003
+    depends_on:
+      cluster_manager:
+        condition: service_started
+      mqtt:
+        condition: service_healthy
+
 volumes:
   mongodb_cluster_data:
     driver: local

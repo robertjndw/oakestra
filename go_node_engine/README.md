@@ -44,6 +44,98 @@ Flags:
 Use "NodeEngine [command] --help" for more information about a command.
 ```
 
+## Running a worker locally via Docker (dev setup)
+
+The worker can be run as a container alongside the cluster orchestrator stack. This uses Docker-in-Docker so that workloads deployed by NodeEngine run inside the worker container, with NetManager able to reach their network namespaces.
+
+### Prerequisites
+
+- The cluster orchestrator stack must be running (`docker compose up` in `cluster_orchestrator/`)
+- `SYSTEM_MANAGER_URL` must be set to your root orchestrator's IP (same requirement as the normal cluster setup)
+
+### Start the worker
+
+From `cluster_orchestrator/`:
+
+```bash
+docker compose up --build worker
+```
+
+To simulate multiple workers:
+
+```bash
+docker compose up --build --scale worker=3
+```
+
+The worker container builds NodeEngine from source and downloads the matching NetManager binary from the `oakestra-net` releases. The NetManager version defaults to the version in `version.txt` and can be overridden:
+
+```bash
+OAKESTRA_VERSION=v0.4.411 docker compose up --build worker
+```
+
+### Verify registration
+
+Check that the worker registered with the cluster manager:
+
+```bash
+curl -s http://localhost:10100/api/nodes | python3 -m json.tool
+```
+
+Check that the cluster is visible at the root:
+
+```bash
+curl -s http://localhost:10000/api/clusters | python3 -m json.tool
+```
+
+### Deploy a test service
+
+```bash
+# Obtain a JWT
+TOKEN=$(curl -s -X POST http://localhost:10000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"Admin","password":"Admin"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+# Deploy a minimal container
+curl -s -X POST http://localhost:10000/api/application \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "application_name": "test",
+    "application_namespace": "default",
+    "application_desc": "smoke test",
+    "microservices": [{
+      "microservice_name": "ping",
+      "microservice_namespace": "default",
+      "virtualization": "container",
+      "cmd": ["sh","-c","while true; do echo ok; sleep 5; done"],
+      "image": "alpine:latest",
+      "memory": 100, "vcpus": 1, "vgpus": 0, "vtpus": 0,
+      "bandwidth_in": 0, "bandwidth_out": 0,
+      "port": "", "constraints": []
+    }]
+  }' | python3 -m json.tool
+```
+
+Follow the deployment through the stack:
+
+```bash
+docker compose logs -f cluster_manager cluster_scheduler worker
+```
+
+Verify the container is running inside the worker's inner Docker daemon:
+
+```bash
+docker exec -it cluster_orchestrator-worker-1 docker ps
+```
+
+Check the service reached `RUNNING` status:
+
+```bash
+curl -s http://localhost:10000/api/applications \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
 ## How to configure additional OCI runtimes
 
 Containerd (the default NodeEngine container runtime) allows any OCI-compliant runtime to be used as a plugin. This means that you can use any OCI-compliant runtime with Oakestra, including:
