@@ -171,6 +171,9 @@ func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificatio
 	var image containerd.Image
 
 	// Open any sealed credentials and build credential-aware pull options.
+	// If any credential cannot be opened or dispatched, abort the deploy rather
+	// than falling back to an unauthenticated pull that would silently fail on
+	// private registries and hide security bugs.
 	pullCtx := &credentials.PullContext{}
 	if len(service.Credentials) > 0 {
 		deployCtx := credentials.DeployContext{
@@ -180,11 +183,11 @@ func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificatio
 		}
 		opened, err := credentials.Open(service.Credentials, deployCtx)
 		if err != nil {
-			logger.ErrorLogger().Printf("credentials: open error: %v", err)
+			return fmt.Errorf("credentials: open failed: %w", err)
 		}
 		for _, o := range opened {
 			if err := credentials.Dispatch(o, pullCtx); err != nil {
-				logger.ErrorLogger().Printf("credentials: dispatch error for use_as=%s: %v", o.UseAs, err)
+				return fmt.Errorf("credentials: dispatch failed for use_as=%s: %w", o.UseAs, err)
 			}
 		}
 	}

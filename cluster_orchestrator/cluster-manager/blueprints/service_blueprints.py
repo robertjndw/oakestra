@@ -12,6 +12,7 @@ from flask import Response, request
 from flask.views import MethodView
 from flask_smorest import Blueprint, abort
 from oakestra_utils.types.statuses import (
+    DeploymentStatus,
     PositiveSchedulingStatus,
     convert_to_status,
 )
@@ -135,15 +136,21 @@ class SchedulingController(MethodView):
                     instance_number=int(instance_number),
                     cluster_id=str(config.MY_ASSIGNED_CLUSTER_ID),
                 )
-                if sealed:
-                    credentials_sealed.append(sealed)
-                else:
-                    logger.warning(
-                        f"Could not seal credential {ref['credential_id']} "
-                        f"for worker {node_id} — deploying without it"
+                if not sealed:
+                    cred_id = ref["credential_id"]
+                    logger.error(
+                        f"Failed to seal credential {cred_id} for worker {node_id} "
+                        f"— aborting deployment of job {job_id} instance {instance_number}"
                     )
-            if credentials_sealed:
-                job["credentials_sealed"] = credentials_sealed
+                    job_management.update_status(
+                        job_id,
+                        int(instance_number),
+                        DeploymentStatus.FAILED.value,
+                        status_detail=f"credential sealing failed: {cred_id}",
+                    )
+                    return Response(json_util.dumps({"status": "ok"}), mimetype="application/json")
+                credentials_sealed.append(sealed)
+            job["credentials_sealed"] = credentials_sealed
 
         # publish job (credentials_sealed is included only in the MQTT payload)
         mqtt_publish_edge_deploy(node_id, job, instance_number)

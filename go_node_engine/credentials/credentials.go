@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"go_node_engine/keyset"
-	"go_node_engine/logger"
 	"go_node_engine/model"
 	"time"
 )
@@ -47,7 +46,8 @@ func RegisterConsumer(c Consumer) {
 }
 
 // Open decrypts all sealed credentials and returns the opened values.
-// context must match what root used to seal each credential.
+// Returns an error if any single credential cannot be opened; callers must not
+// proceed with the pull when an error is returned.
 func Open(sealed []model.SealedCredential, deployCtx DeployContext) ([]OpenedCredential, error) {
 	dec, err := keyset.GetHybridDecrypt()
 	if err != nil {
@@ -61,20 +61,18 @@ func Open(sealed []model.SealedCredential, deployCtx DeployContext) ([]OpenedCre
 		// Replay window check
 		age := now - s.UnixTS
 		if age > replayWindowSeconds || age < -60 {
-			logger.ErrorLogger().Printf(
+			return nil, fmt.Errorf(
 				"credentials: rejecting credential use_as=%s — timestamp age %ds exceeds replay window",
 				s.UseAs, age,
 			)
-			continue
 		}
 
 		// Check key_id matches what we have loaded
 		if s.KeyID != keyset.KeyID {
-			logger.ErrorLogger().Printf(
+			return nil, fmt.Errorf(
 				"credentials: key_id mismatch for use_as=%s: got %s, have %s — worker key may have rotated",
 				s.UseAs, s.KeyID, keyset.KeyID,
 			)
-			continue
 		}
 
 		ctx := canonicalContextInfo(
@@ -88,14 +86,12 @@ func Open(sealed []model.SealedCredential, deployCtx DeployContext) ([]OpenedCre
 
 		ciphertext, err := base64.StdEncoding.DecodeString(s.CiphertextB64())
 		if err != nil {
-			logger.ErrorLogger().Printf("credentials: base64 decode failed for use_as=%s: %v", s.UseAs, err)
-			continue
+			return nil, fmt.Errorf("credentials: base64 decode failed for use_as=%s: %w", s.UseAs, err)
 		}
 
 		plaintext, err := dec.Decrypt(ciphertext, ctx)
 		if err != nil {
-			logger.ErrorLogger().Printf("credentials: HPKE decrypt failed for use_as=%s: %v", s.UseAs, err)
-			continue
+			return nil, fmt.Errorf("credentials: HPKE decrypt failed for use_as=%s: %w", s.UseAs, err)
 		}
 
 		opened = append(opened, OpenedCredential{
@@ -109,14 +105,14 @@ func Open(sealed []model.SealedCredential, deployCtx DeployContext) ([]OpenedCre
 }
 
 // Dispatch finds the matching consumer and calls Apply.
+// Returns an error if no consumer is registered for the given use_as/type combination.
 func Dispatch(opened OpenedCredential, pullCtx *PullContext) error {
 	for _, c := range consumers {
 		if c.Match(opened.UseAs, opened.Type) {
 			return c.Apply(opened, pullCtx)
 		}
 	}
-	logger.InfoLogger().Printf("credentials: no consumer for use_as=%s type=%s — skipping", opened.UseAs, opened.Type)
-	return nil
+	return fmt.Errorf("credentials: no consumer registered for use_as=%s type=%s", opened.UseAs, opened.Type)
 }
 
 // canonicalContextInfo rebuilds the null-byte-separated binding string that root used as HPKE AAD.

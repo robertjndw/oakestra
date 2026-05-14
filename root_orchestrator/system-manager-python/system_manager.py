@@ -76,8 +76,11 @@ try:
         f"{len(_cred_registry.get_registered_types())} type handler(s) registered"
     )
 except RuntimeError as e:
-    logger.error(f"FATAL: Credential subsystem failed to initialize: {e}")
-    raise SystemExit(1)
+    logger.warning(
+        f"Credential subsystem disabled: {e}. "
+        "Set CREDENTIAL_ENCRYPTION_KEY to enable credential management. "
+        "All /api/credential* endpoints will return 503."
+    )
 
 MY_PORT = os.environ.get("MY_PORT") or 10000
 MY_PORT_GRPC = os.environ.get("MY_PORT_GRPC") or 50052

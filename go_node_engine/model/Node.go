@@ -112,20 +112,24 @@ func (n *Node) SetOverlaySocket(socket string) {
 }
 
 // GetDynamicInfo returns the dynamic information of the node (CPU, Memory, GPU usage etc.)
+// PubKeysetB64 and KeyID are included so the periodic MQTT push keeps root's worker-key
+// registry current even after cluster restarts that lose their in-memory buffer.
 func GetDynamicInfo() Node {
 	node.updateDynamicInfo()
 	return Node{
-		Ip:          node.Ip,
-		CpuUsage:    node.CpuUsage,
-		CpuCores:    node.CpuCores,
-		MemoryUsed:  node.MemoryUsed,
-		MemoryMB:    node.MemoryMB,
-		GpuDriver:   node.GpuDriver,
-		GpuTemp:     node.GpuTemp,
-		GpuUsage:    node.GpuUsage,
-		GpuTotMem:   node.GpuTotMem,
-		GpuMemUsage: node.GpuMemUsage,
-		GpuCores:    node.GpuCores,
+		Ip:           node.Ip,
+		CpuUsage:     node.CpuUsage,
+		CpuCores:     node.CpuCores,
+		MemoryUsed:   node.MemoryUsed,
+		MemoryMB:     node.MemoryMB,
+		GpuDriver:    node.GpuDriver,
+		GpuTemp:      node.GpuTemp,
+		GpuUsage:     node.GpuUsage,
+		GpuTotMem:    node.GpuTotMem,
+		GpuMemUsage:  node.GpuMemUsage,
+		GpuCores:     node.GpuCores,
+		PubKeysetB64: node.PubKeysetB64,
+		KeyID:        node.KeyID,
 	}
 }
 

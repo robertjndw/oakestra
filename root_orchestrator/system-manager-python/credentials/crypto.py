@@ -8,6 +8,7 @@ from cryptography.fernet import Fernet
 _fernet: Fernet | None = None
 _hybrid_registered = False
 _enc_cache: dict[str, Any] = {}  # key_id -> HybridEncrypt primitive
+_credentials_enabled: bool = False
 
 
 def _init_fernet() -> Fernet:
@@ -33,8 +34,15 @@ def _init_hybrid() -> None:
 
 def init_crypto() -> None:
     """Call at startup to validate config and fail fast if anything is missing."""
+    global _credentials_enabled
     _init_fernet()
     _init_hybrid()
+    _credentials_enabled = True
+
+
+def is_enabled() -> bool:
+    """Return True only when init_crypto() completed successfully."""
+    return _credentials_enabled
 
 
 def encrypt_payload(data: dict) -> str:
