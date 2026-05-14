@@ -16,7 +16,7 @@ def get_user_apps(userid):
     return user_apps, 200
 
 
-def register_app(applications, userid):
+def register_app(applications, userid, organization_id=None):
     try:
         parse_sla_json(applications)
     except SLAFormatError as e:
@@ -55,6 +55,7 @@ def register_app(applications, userid):
                             "customerID": userid,
                             "applications": [application],
                         },
+                        organization_id=organization_id,
                     )
                     if status != 200:
                         delete_app(app_id, userid)

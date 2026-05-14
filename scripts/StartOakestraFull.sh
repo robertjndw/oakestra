@@ -180,6 +180,26 @@ if sudo docker ps -a | grep oakestra >/dev/null 2>&1; then
   fi
 fi
 
+# Generate CREDENTIAL_ENCRYPTION_KEY on first run and persist it
+OAK_ENV_FILE=~/.oakestra/.env
+if [ -z "$CREDENTIAL_ENCRYPTION_KEY" ]; then
+    if [ -f "$OAK_ENV_FILE" ] && grep -q "CREDENTIAL_ENCRYPTION_KEY=" "$OAK_ENV_FILE" 2>/dev/null; then
+        export CREDENTIAL_ENCRYPTION_KEY=$(grep "CREDENTIAL_ENCRYPTION_KEY=" "$OAK_ENV_FILE" | cut -d= -f2-)
+        echo "🔑 Loaded CREDENTIAL_ENCRYPTION_KEY from $OAK_ENV_FILE"
+    else
+        if command -v python3 >/dev/null 2>&1; then
+            export CREDENTIAL_ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+        else
+            echo "❌ ERROR: python3 not found. Cannot generate CREDENTIAL_ENCRYPTION_KEY."
+            echo "   Please set CREDENTIAL_ENCRYPTION_KEY manually and re-run."
+            exit 1
+        fi
+        echo "CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY}" >> "$OAK_ENV_FILE"
+        chmod 600 "$OAK_ENV_FILE"
+        echo "🔑 Generated and saved new CREDENTIAL_ENCRYPTION_KEY to $OAK_ENV_FILE"
+    fi
+fi
+
 command_exec="sudo -E docker compose -f 1-DOC.yaml ${OAK_OVERRIDES} up -d"
 echo executing "$command_exec"
 

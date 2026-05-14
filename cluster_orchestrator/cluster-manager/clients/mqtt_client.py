@@ -13,6 +13,9 @@ logger = logging.getLogger("cluster_manager")
 
 mqtt = None
 
+# Maps worker_id -> {pub_keyset_b64, key_id}; flushed each 15s push cycle
+_pending_worker_keys: dict = {}
+
 
 def handle_connect(client, userdata, flags, rc):
     logger.info("MQTT - Connected to MQTT Broker")
@@ -43,6 +46,13 @@ def handle_mqtt_message(client, userdata, message):
 
     # if topic starts with nodes and ends with information
     if re_nodes_information_topic is not None:
+        pub_keyset_b64 = payload.pop("pub_keyset_b64", None)
+        key_id = payload.pop("key_id", None)
+        if pub_keyset_b64 and key_id:
+            _pending_worker_keys[client_id] = {
+                "pub_keyset_b64": pub_keyset_b64,
+                "key_id": key_id,
+            }
         payload = {k: v for k, v in payload.items() if v is not None}
         updated = candidate_operations.update_candidate_information(client_id, payload)
         if updated is None:
@@ -125,3 +135,14 @@ def mqtt_publish_edge_delete(worker_id, job_name, instance_number, runtime="dock
         "instance_number": int(instance_number),
     }
     mqtt.publish(topic, json.dumps(data))
+
+
+def get_and_clear_pending_worker_keys() -> dict:
+    """
+    Return accumulated worker public keysets since the last call and clear the buffer.
+    Called by the 15s resource-aggregation push to forward key registrations to root.
+    """
+    global _pending_worker_keys
+    keys = dict(_pending_worker_keys)
+    _pending_worker_keys = {}
+    return keys

@@ -101,6 +101,17 @@ sla_schema = {
                                         "type": "string",
                                     },
                                 },
+                                "credentials": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {"type": "string"},
+                                            "use_as": {"type": "string"},
+                                        },
+                                        "required": ["name", "use_as"],
+                                    },
+                                },
                                 "constraints": {
                                     "type": "array",
                                     "items": {

@@ -2,6 +2,7 @@ from blueprints.applications_blueprints import applicationblp, applicationsblp
 from blueprints.authentication_blueprints import loginbp
 from blueprints.authorization_blueprints import permissionbp
 from blueprints.clusters_blueprints import clusterinfo, clustersbp
+from blueprints.credentials_blueprints import credentialblp, credentialsblp
 from blueprints.deployment_blueprints import deploybp
 from blueprints.organization_blueprints import organizationblp
 from blueprints.scheduling_blueprints import schedulingbp
@@ -22,4 +23,6 @@ blueprints = [
     clusterinfo,
     clustersbp,
     organizationblp,
+    credentialblp,
+    credentialsblp,
 ]

@@ -6,6 +6,7 @@ import (
 	"go_node_engine/config"
 	"go_node_engine/csi"
 	"go_node_engine/jobs"
+	"go_node_engine/keyset"
 	"go_node_engine/logger"
 	"go_node_engine/model"
 	"go_node_engine/mqtt"
@@ -75,6 +76,15 @@ func main() {
 			logger.InfoLogger().Printf("Startup addon: %s", addon.Name)
 			addons.StartupAddon(model.AddonType(addon.Name), addon.Config)
 		}
+	}
+
+	// Initialize node HPKE keypair for sealed-credential delivery
+	if err := keyset.Init(); err != nil {
+		logger.ErrorLogger().Printf("WARNING: keyset init failed (%v) — credential sealing disabled", err)
+	} else {
+		node := model.GetNodeInfo()
+		node.PubKeysetB64 = keyset.PublicKeysetB64
+		node.KeyID = keyset.KeyID
 	}
 
 	// hadshake with the cluster orchestrator to get mqtt port and node id

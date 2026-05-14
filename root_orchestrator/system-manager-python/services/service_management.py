@@ -37,7 +37,7 @@ def insert_job(microservice):
     return str(new_job.get("_id"))
 
 
-def create_services_of_app(username, data, force=False):
+def create_services_of_app(username, data, force=False, organization_id=None):
     logging.log(logging.DEBUG, data)
     try:
         parse_sla_json(data)
@@ -57,6 +57,36 @@ def create_services_of_app(username, data, force=False):
     for microservice in data.get("applications")[0].get("microservices"):
         # Insert job into database
         service = generate_db_structure(application, microservice)
+
+        # Resolve credential references before inserting the job
+        cred_refs_input = microservice.get("credentials", [])
+        if cred_refs_input:
+            from credentials.resolver import CredentialError, resolve_credential_ref
+
+            credential_refs = []
+            resolution_failed = False
+            for cred_ref in cred_refs_input:
+                try:
+                    cred_id = resolve_credential_ref(
+                        cred_ref["name"], cred_ref["use_as"], username, organization_id
+                    )
+                    credential_refs.append(
+                        {"credential_id": cred_id, "use_as": cred_ref["use_as"]}
+                    )
+                except CredentialError as e:
+                    failed_services.append(
+                        {
+                            "service_name": service["service_name"],
+                            "message": str(e),
+                            "status": 400,
+                        }
+                    )
+                    resolution_failed = True
+                    break
+            if resolution_failed:
+                continue
+            service["credential_refs"] = credential_refs
+
         last_service_id = insert_job(service)
         if last_service_id is None:
             logging.warning(

@@ -64,6 +64,10 @@ type Node struct {
 	SupportedAddons []AddonType          `json:"supported_addons"`
 	// CSIDrivers lists the CSI plugins that have been successfully probed on this node.
 	CSIDrivers     []config.CSIDriverType `json:"csi_drivers"`
+	// PubKeysetB64 is the base64-encoded Tink public keyset used by root to seal credentials.
+	PubKeysetB64   string `json:"pub_keyset_b64,omitempty"`
+	// KeyID is the sha256-derived identifier for the primary key in the keyset.
+	KeyID          string `json:"key_id,omitempty"`
 	Overlay        bool
 	OverlaySocket  string
 	LogDirectory   string

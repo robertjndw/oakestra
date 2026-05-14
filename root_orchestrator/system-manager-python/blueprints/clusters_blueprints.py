@@ -2,6 +2,7 @@ import logging
 
 from bson import json_util
 from ext_requests.cluster_requests import cluster_request_to_delete_job_by_ip
+from ext_requests.worker_keys_db import mongo_upsert_worker_key
 from flask import request
 from flask.views import MethodView
 from flask_smorest import Blueprint, abort
@@ -96,6 +97,13 @@ class ClusterController(MethodView):
         jobs = data.get("jobs")
         logger.info(f"Received cluster update for {cluster_id}: {data}")
         del data["jobs"]
+
+        worker_keys = data.pop("worker_keys", {})
+        for worker_id, key_info in worker_keys.items():
+            pub_keyset_b64 = key_info.get("pub_keyset_b64")
+            key_id = key_info.get("key_id")
+            if pub_keyset_b64 and key_id:
+                mongo_upsert_worker_key(worker_id, cluster_id, pub_keyset_b64, key_id)
         # Prevent the IP address from being overwritten by cluster updates
         # The IP is set during initial registration and should not change
         if "ip" in data:

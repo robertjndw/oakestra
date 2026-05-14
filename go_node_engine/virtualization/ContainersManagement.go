@@ -3,7 +3,10 @@ package virtualization
 import (
 	"context"
 	"fmt"
+	"go_node_engine/credentials"
+	_ "go_node_engine/credentials/consumers" // register all credential consumers via init()
 	"go_node_engine/csi"
+	"go_node_engine/keyset"
 	"go_node_engine/logger"
 	"go_node_engine/model"
 	"go_node_engine/model/gpu"
@@ -167,6 +170,25 @@ func (r *ContainerRuntime) Stop() {
 func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificationHandler func(service model.Service)) error {
 	var image containerd.Image
 
+	// Open any sealed credentials and build credential-aware pull options.
+	pullCtx := &credentials.PullContext{}
+	if len(service.Credentials) > 0 {
+		deployCtx := credentials.DeployContext{
+			JobID:    service.JobID,
+			WorkerID: model.GetNodeInfo().Id,
+			KeyID:    keyset.KeyID,
+		}
+		opened, err := credentials.Open(service.Credentials, deployCtx)
+		if err != nil {
+			logger.ErrorLogger().Printf("credentials: open error: %v", err)
+		}
+		for _, o := range opened {
+			if err := credentials.Dispatch(o, pullCtx); err != nil {
+				logger.ErrorLogger().Printf("credentials: dispatch error for use_as=%s: %v", o.UseAs, err)
+			}
+		}
+	}
+
 	// pull the given image
 	sysimg, err := r.containerClient.ImageService().Get(r.ctx, service.Image)
 	if err == nil {
@@ -177,6 +199,11 @@ func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificatio
 		remoteOpt := []containerd.RemoteOpt{containerd.WithPullUnpack}
 		if service.Platform != "" {
 			remoteOpt = append(remoteOpt, containerd.WithPlatform(service.Platform))
+		}
+		for _, opt := range pullCtx.RemoteOpts {
+			if ro, ok := opt.(containerd.RemoteOpt); ok {
+				remoteOpt = append(remoteOpt, ro)
+			}
 		}
 		image, err = r.containerClient.Pull(r.ctx, service.Image, remoteOpt...)
 
@@ -192,7 +219,13 @@ func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificatio
 				resolver := docker_remote.NewResolver(docker_remote.ResolverOptions{
 					Hosts: docker_remote.ConfigureDefaultRegistries(ropts...),
 				})
-				image, err = r.containerClient.Pull(r.ctx, service.Image, containerd.WithPullUnpack, containerd.WithResolver(resolver))
+				httpOpts := []containerd.RemoteOpt{containerd.WithPullUnpack, containerd.WithResolver(resolver)}
+				for _, opt := range pullCtx.RemoteOpts {
+					if ro, ok := opt.(containerd.RemoteOpt); ok {
+						httpOpts = append(httpOpts, ro)
+					}
+				}
+				image, err = r.containerClient.Pull(r.ctx, service.Image, httpOpts...)
 				if err != nil {
 					return err
 				}

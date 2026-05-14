@@ -125,10 +125,10 @@ func withRuntimeManager(
 }
 
 func deployHandler(client mqtt.Client, msg mqtt.Message, runtimeManager *virtualization.RuntimeManager) {
-	logger.InfoLogger().Printf("Received deployment request with payload: %s", string(msg.Payload()))
+	logger.InfoLogger().Printf("Received deployment request (payload redacted for security)")
 	service := model.Service{}
 	err := json.Unmarshal(msg.Payload(), &service)
-	logger.InfoLogger().Printf("%+v", service)
+	logger.InfoLogger().Printf("%+v", service.Redacted())
 	if err != nil {
 		logger.ErrorLogger().Printf("ERROR: unable to unmarshal cluster orch request: %v", err)
 		return

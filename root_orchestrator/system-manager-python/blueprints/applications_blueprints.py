@@ -94,7 +94,8 @@ class CreateApplicationController(Resource):
     def post(self, *args, **kwargs):
         data = request.get_json()
         current_user = get_jwt_identity()
-        result, code = register_app(data, current_user)
+        organization_id = get_jwt_organization()
+        result, code = register_app(data, current_user, organization_id=organization_id)
         if code != 200:
             abort(code, description=result)
 
