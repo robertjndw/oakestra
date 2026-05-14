@@ -128,7 +128,19 @@ class CredentialsController(MethodView):
     def get(self, *args, **kwargs):
         username = get_jwt_identity()
         organization_id = get_jwt_organization()
-        records = mongo_list_credentials(username, organization_id)
+        claims = get_jwt_auth_claims()
+
+        # The `organization` JWT claim is set from the org name supplied at login
+        # and is NOT a proof of membership. Re-verify membership here before
+        # returning org-scoped credentials, otherwise any authenticated user
+        # could enumerate any organization's credential metadata.
+        effective_org_id = organization_id
+        if effective_org_id and not _is_admin(claims):
+            roles = mongo_get_roles_of_user_in_organization(username, effective_org_id)
+            if not roles:
+                effective_org_id = None
+
+        records = mongo_list_credentials(username, effective_org_id)
         handler_map = {}
         result = []
         for r in records:
@@ -344,20 +356,31 @@ class CredentialSealController(MethodView):
         ):
             return abort(403, description="Credential not referenced by this job")
 
-        # Verify that this specific instance is actually scheduled on the requested worker.
-        # Root learns the per-instance worker_id via the cluster's 15s aggregation push.
-        # If the record is absent (race at initial scheduling) we allow the seal through
-        # but log a warning; once the aggregation push arrives, subsequent requests will
-        # be validated strictly.
+        # Verify that this specific instance was scheduled on the requesting cluster.
+        # The instance record's cluster_id is populated synchronously by
+        # instance_scale_up_scheduled_handler before the deploy request is sent to the
+        # cluster, so it is authoritative at /seal time. Without this check a malicious
+        # cluster could request seals for jobs scheduled on other clusters.
         instance_record = get_job_instance(job_id, instance_number)
-        if instance_record is not None:
-            scheduled_worker = instance_record.get("worker_id")
-            if scheduled_worker and scheduled_worker != worker_id:
-                logger.warning(
-                    f"Seal request worker mismatch: job={job_id} instance={instance_number} "
-                    f"scheduled_on={scheduled_worker} requested_for={worker_id}"
-                )
-                return abort(403, description="Instance is not scheduled on the requested worker")
+        if instance_record is None:
+            return abort(404, description="Job instance not found")
+        if instance_record.get("cluster_id") != cluster_id:
+            logger.warning(
+                f"Seal request cluster mismatch: job={job_id} instance={instance_number} "
+                f"scheduled_on_cluster={instance_record.get('cluster_id')} "
+                f"requesting_cluster={cluster_id}"
+            )
+            return abort(403, description="Instance is not scheduled on the requesting cluster")
+
+        # The per-instance worker_id arrives later via the cluster's 15s aggregation push.
+        # When populated, enforce strict equality against the requested worker.
+        scheduled_worker = instance_record.get("worker_id")
+        if scheduled_worker and scheduled_worker != worker_id:
+            logger.warning(
+                f"Seal request worker mismatch: job={job_id} instance={instance_number} "
+                f"scheduled_on={scheduled_worker} requested_for={worker_id}"
+            )
+            return abort(403, description="Instance is not scheduled on the requested worker")
 
         try:
             sealed = seal_credential_for_worker(
