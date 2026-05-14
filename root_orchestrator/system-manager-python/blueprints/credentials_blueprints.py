@@ -11,7 +11,7 @@ from roles.securityUtils import Role, get_jwt_auth_claims, get_jwt_organization
 
 from blueprints.schema_wrapper import SchemaWrapper
 from credentials import registry
-from credentials.crypto import encrypt_payload, is_enabled as _credentials_enabled
+from credentials.crypto import decrypt_payload, encrypt_payload, is_enabled as _credentials_enabled
 from credentials.resolver import (
     CredentialError,
     CredentialNotFoundError,
@@ -111,7 +111,11 @@ def _check_write_access(record, username, organization_id, claims):
         return True
     if record["owner_user_id"] == username:
         return True
-    if record["scope"] == "organization" and organization_id:
+    if (
+        record["scope"] == "organization"
+        and organization_id
+        and record.get("organization_id") == organization_id
+    ):
         roles = mongo_get_roles_of_user_in_organization(username, organization_id)
         return Role.ORGANIZATION_ADMIN in roles
     return False
@@ -229,16 +233,30 @@ class CredentialController(MethodView):
             return abort(500, description=f"Unknown credential type '{record['type']}'")
 
         updates = {}
+        existing_metadata = record.get("metadata", {}) or {}
         if "metadata" in data:
-            updates["metadata"] = data["metadata"]
+            # Merge partial metadata with existing so callers can update individual
+            # fields without dropping required ones (e.g. DockerRegistry.username).
+            merged_metadata = {**existing_metadata, **(data["metadata"] or {})}
+            updates["metadata"] = merged_metadata
+        else:
+            merged_metadata = existing_metadata
+
         if "data" in data:
             payload = data["data"]
-            metadata = data.get("metadata") or record.get("metadata", {})
             try:
-                handler.validate(payload, metadata)
+                handler.validate(payload, merged_metadata)
             except ValueError as e:
                 return abort(400, description=str(e))
             updates["data_ciphertext"] = encrypt_payload(payload)
+        elif "metadata" in data:
+            # Validate merged metadata against the existing decrypted payload so we
+            # don't persist metadata that the handler would reject.
+            try:
+                existing_payload = decrypt_payload(record["data_ciphertext"])
+                handler.validate(existing_payload, merged_metadata)
+            except ValueError as e:
+                return abort(400, description=str(e))
 
         if not updates:
             return abort(400, description="No updatable fields provided")

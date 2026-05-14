@@ -113,6 +113,19 @@ if [ "$2" != "custom" ]; then
     export CLUSTER_NAME=default_cluster
 fi
 
+# Preserve the credential encryption key across restarts: load it before the
+# cleanup wipes ~/.oakestra, then re-persist after recreating the directory. The
+# key must remain stable or previously-encrypted credentials in Mongo become
+# undecryptable.
+OAK_ENV_FILE=~/.oakestra/.env
+if [ -z "$CREDENTIAL_ENCRYPTION_KEY" ] && [ -f "$OAK_ENV_FILE" ]; then
+    PRESERVED_KEY=$(grep "^CREDENTIAL_ENCRYPTION_KEY=" "$OAK_ENV_FILE" 2>/dev/null | cut -d= -f2-)
+    if [ -n "$PRESERVED_KEY" ]; then
+        export CREDENTIAL_ENCRYPTION_KEY="$PRESERVED_KEY"
+        echo "🔑 Preserved existing CREDENTIAL_ENCRYPTION_KEY across restart"
+    fi
+fi
+
 rm -rf ~/.oakestra 2> /dev/null
 mkdir ~/.oakestra 2> /dev/null
 
@@ -180,25 +193,21 @@ if sudo docker ps -a | grep oakestra >/dev/null 2>&1; then
   fi
 fi
 
-# Generate CREDENTIAL_ENCRYPTION_KEY on first run and persist it
-OAK_ENV_FILE=~/.oakestra/.env
+# Generate CREDENTIAL_ENCRYPTION_KEY on first run and persist it.
+# OAK_ENV_FILE was set above so the previous key could be preserved across the
+# cleanup; it is now regenerated only if neither the env nor preservation set it.
 if [ -z "$CREDENTIAL_ENCRYPTION_KEY" ]; then
-    if [ -f "$OAK_ENV_FILE" ] && grep -q "CREDENTIAL_ENCRYPTION_KEY=" "$OAK_ENV_FILE" 2>/dev/null; then
-        export CREDENTIAL_ENCRYPTION_KEY=$(grep "CREDENTIAL_ENCRYPTION_KEY=" "$OAK_ENV_FILE" | cut -d= -f2-)
-        echo "🔑 Loaded CREDENTIAL_ENCRYPTION_KEY from $OAK_ENV_FILE"
+    if command -v python3 >/dev/null 2>&1; then
+        export CREDENTIAL_ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
     else
-        if command -v python3 >/dev/null 2>&1; then
-            export CREDENTIAL_ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-        else
-            echo "❌ ERROR: python3 not found. Cannot generate CREDENTIAL_ENCRYPTION_KEY."
-            echo "   Please set CREDENTIAL_ENCRYPTION_KEY manually and re-run."
-            exit 1
-        fi
-        echo "CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY}" >> "$OAK_ENV_FILE"
-        chmod 600 "$OAK_ENV_FILE"
-        echo "🔑 Generated and saved new CREDENTIAL_ENCRYPTION_KEY to $OAK_ENV_FILE"
+        echo "❌ ERROR: python3 not found. Cannot generate CREDENTIAL_ENCRYPTION_KEY."
+        echo "   Please set CREDENTIAL_ENCRYPTION_KEY manually and re-run."
+        exit 1
     fi
+    echo "🔑 Generated new CREDENTIAL_ENCRYPTION_KEY"
 fi
+echo "CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY}" > "$OAK_ENV_FILE"
+chmod 600 "$OAK_ENV_FILE"
 
 command_exec="sudo -E docker compose -f 1-DOC.yaml ${OAK_OVERRIDES} up -d"
 echo executing "$command_exec"
