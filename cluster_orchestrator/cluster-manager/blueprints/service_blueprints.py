@@ -1,7 +1,7 @@
-import config
 import logging
 import traceback
 
+import config
 from bson import json_util
 from clients import job_management
 from clients.job_management import deploy_job

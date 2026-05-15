@@ -10,6 +10,8 @@ from pathlib import Path
 import grpc
 from blueprints import blueprints
 from bson import json_util
+from credentials import crypto as _cred_crypto
+from credentials import registry as _cred_registry
 from ext_requests.jwt_generator_requests import get_public_key
 from ext_requests.mongodb_client import mongo_init
 from ext_requests.net_plugin_requests import net_register_cluster
@@ -64,9 +66,6 @@ socketio = SocketIO(
 )
 mongo_init(app)
 create_admin()
-
-from credentials import crypto as _cred_crypto
-from credentials import registry as _cred_registry
 
 try:
     _cred_crypto.init_crypto()

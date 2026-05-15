@@ -1,23 +1,13 @@
 import logging
 
 from bson import json_util
-from flask import request
-from flask.views import MethodView
-from flask_jwt_extended import get_jwt_identity, jwt_required
-from flask_smorest import Blueprint, abort
-from resource_abstractor_client import candidate_operations, job_operations
-from resource_abstractor_client.job_operations import get_job_instance
-from roles.securityUtils import Role, get_jwt_auth_claims, get_jwt_organization
-
-from blueprints.schema_wrapper import SchemaWrapper
 from credentials import registry
-from credentials.crypto import decrypt_payload, encrypt_payload, is_enabled as _credentials_enabled
+from credentials.crypto import decrypt_payload, encrypt_payload
+from credentials.crypto import is_enabled as _credentials_enabled
 from credentials.resolver import (
     CredentialError,
     CredentialNotFoundError,
-    CredentialPermissionError,
     WorkerKeyNotFoundError,
-    resolve_credential_ref,
     seal_credential_for_worker,
 )
 from ext_requests.credentials_db import (
@@ -29,7 +19,16 @@ from ext_requests.credentials_db import (
 )
 from ext_requests.organization_db import mongo_get_roles_of_user_in_organization
 from ext_requests.worker_keys_db import mongo_get_worker_key
+from flask import request
+from flask.views import MethodView
+from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_smorest import Blueprint, abort
+from resource_abstractor_client import candidate_operations, job_operations
+from resource_abstractor_client.job_operations import get_job_instance
+from roles.securityUtils import Role, get_jwt_auth_claims, get_jwt_organization
 from utils.network import sanitize
+
+from blueprints.schema_wrapper import SchemaWrapper
 
 logger = logging.getLogger("system_manager")
 

@@ -1,8 +1,6 @@
 import logging
 import time
 
-from credentials import registry
-from credentials.crypto import canonical_context_info, decrypt_payload, seal_for_worker
 from ext_requests.credentials_db import (
     mongo_get_credential_by_id,
     mongo_get_credential_by_name_and_org,
@@ -10,6 +8,9 @@ from ext_requests.credentials_db import (
 )
 from ext_requests.organization_db import mongo_get_roles_of_user_in_organization
 from ext_requests.worker_keys_db import mongo_get_worker_key
+
+from credentials import registry
+from credentials.crypto import canonical_context_info, decrypt_payload, seal_for_worker
 
 logger = logging.getLogger("system_manager")
 
