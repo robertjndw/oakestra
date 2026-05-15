@@ -6,7 +6,13 @@ from flask import request
 from flask.views import MethodView
 from flask_restful import Resource
 from flask_smorest import Blueprint, abort
-from roles.securityUtils import Role, get_jwt_auth_identity, jwt_auth_required, require_role
+from roles.securityUtils import (
+    Role,
+    get_jwt_auth_identity,
+    get_jwt_organization,
+    jwt_auth_required,
+    require_role,
+)
 from services import service_management
 
 from blueprints.schema_wrapper import SchemaWrapper
@@ -111,7 +117,10 @@ class ServiceControllerPost(MethodView):
         if data:
             try:
                 username = get_jwt_auth_identity()
-                result, status = service_management.create_services_of_app(username, data)
+                organization_id = get_jwt_organization()
+                result, status = service_management.create_services_of_app(
+                    username, data, organization_id=organization_id
+                )
                 if status != 200:
                     abort(status, result)
                 return result

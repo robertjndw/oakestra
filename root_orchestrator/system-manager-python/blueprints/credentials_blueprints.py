@@ -199,7 +199,8 @@ class CredentialCreateController(MethodView):
         except Exception as e:
             if "duplicate" in str(e).lower():
                 return abort(409, description="A credential with that name already exists")
-            return abort(500, description=str(e))
+            logger.exception("Failed to create credential")
+            return abort(500, description="Failed to create credential")
 
         logger.info(f"Credential created: id={credential_id} type={cred_type} scope={scope} user={username}")
         return {"_id": credential_id, "message": "Credential created"}, 201
