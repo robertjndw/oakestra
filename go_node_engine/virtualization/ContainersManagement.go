@@ -175,6 +175,21 @@ func (r *ContainerRuntime) Stop() {
 	}
 }
 
+// buildResolver returns a WithResolver RemoteOpt, optionally with credential auth.
+// extraOpts (e.g. WithPlainHTTP) are applied to the registry host config alongside
+// the authorizer so both auth and transport settings are active in the same resolver.
+func buildResolver(credsFn func(string) (string, string, error), extraOpts ...docker_remote.RegistryOpt) containerd.RemoteOpt {
+	opts := extraOpts
+	if credsFn != nil {
+		authz := docker_remote.NewDockerAuthorizer(docker_remote.WithAuthCreds(credsFn))
+		opts = append([]docker_remote.RegistryOpt{docker_remote.WithAuthorizer(authz)}, extraOpts...)
+	}
+	resolver := docker_remote.NewResolver(docker_remote.ResolverOptions{
+		Hosts: docker_remote.ConfigureDefaultRegistries(opts...),
+	})
+	return containerd.WithResolver(resolver)
+}
+
 // Deploy deploys a service
 func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificationHandler func(service model.Service)) error {
 	var image containerd.Image
@@ -207,32 +222,19 @@ func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificatio
 		if service.Platform != "" {
 			remoteOpt = append(remoteOpt, containerd.WithPlatform(service.Platform))
 		}
-		for _, opt := range pullCtx.RemoteOpts {
-			if ro, ok := opt.(containerd.RemoteOpt); ok {
-				remoteOpt = append(remoteOpt, ro)
-			}
+		if pullCtx.CredsFn != nil {
+			remoteOpt = append(remoteOpt, buildResolver(pullCtx.CredsFn))
 		}
 		image, err = r.containerClient.Pull(r.ctx, service.Image, remoteOpt...)
 
 		if err != nil {
 			// avoid crashing for HTTP based registires in local infrastructures
 			if strings.Contains(err.Error(), "http: server gave HTTP response to HTTPS client") {
-				alwaysPlainHTTP := func(string) (bool, error) {
-					return true, nil
-				}
-				ropts := []docker_remote.RegistryOpt{
-					docker_remote.WithPlainHTTP(alwaysPlainHTTP),
-				}
-				resolver := docker_remote.NewResolver(docker_remote.ResolverOptions{
-					Hosts: docker_remote.ConfigureDefaultRegistries(ropts...),
-				})
-				httpOpts := []containerd.RemoteOpt{containerd.WithPullUnpack, containerd.WithResolver(resolver)}
-				for _, opt := range pullCtx.RemoteOpts {
-					if ro, ok := opt.(containerd.RemoteOpt); ok {
-						httpOpts = append(httpOpts, ro)
-					}
-				}
-				image, err = r.containerClient.Pull(r.ctx, service.Image, httpOpts...)
+				alwaysPlainHTTP := func(string) (bool, error) { return true, nil }
+				image, err = r.containerClient.Pull(r.ctx, service.Image,
+					containerd.WithPullUnpack,
+					buildResolver(pullCtx.CredsFn, docker_remote.WithPlainHTTP(alwaysPlainHTTP)),
+				)
 				if err != nil {
 					return err
 				}

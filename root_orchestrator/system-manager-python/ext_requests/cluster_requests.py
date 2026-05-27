@@ -20,10 +20,9 @@ def cluster_request_status(cluster_id):
 def _embed_credentials(job: dict) -> None:
     """
     Resolve, decrypt, and materialize any credential_refs on the job, embedding
-    the plaintext credential values into job["credentials"] for delivery to the
-    cluster and worker.  Runs only when the credential subsystem is enabled.
-    Logs and skips individual refs that cannot be resolved rather than aborting,
-    since a partial failure is still surfaced via the missing credential at pull time.
+    the plaintext values into job["credentials"] for delivery to the cluster/worker.
+    Raises RuntimeError if any ref fails — the caller should abort the deploy so
+    the user gets a clear error instead of a silent pull failure at the worker.
     """
     from credentials.crypto import is_enabled
     from credentials.resolver import CredentialError, materialize_credential
@@ -39,11 +38,10 @@ def _embed_credentials(job: dict) -> None:
                 materialize_credential(ref["credential_id"], ref["use_as"])
             )
         except CredentialError as e:
-            logger.error(
+            raise RuntimeError(
                 f"Failed to materialize credential {ref.get('credential_id')}: {e}"
-            )
-    if materialized:
-        job["credentials"] = materialized
+            ) from e
+    job["credentials"] = materialized
 
 
 def cluster_request_to_deploy(cluster_id, job_id, instance_number):

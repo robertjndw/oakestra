@@ -1,5 +1,6 @@
 import logging
 
+from credentials.resolver import CredentialError, resolve_credential_ref
 from ext_requests.net_plugin_requests import net_inform_service_deploy, net_inform_service_undeploy
 from resource_abstractor_client import app_operations, job_operations
 from sla.versioned_sla_parser import SLAFormatError, parse_sla_json
@@ -61,10 +62,7 @@ def create_services_of_app(username, data, force=False, organization_id=None):
         # Resolve credential references before inserting the job
         cred_refs_input = microservice.get("credentials", [])
         if cred_refs_input:
-            from credentials.resolver import CredentialError, resolve_credential_ref
-
             credential_refs = []
-            resolution_failed = False
             for cred_ref in cred_refs_input:
                 try:
                     cred_id = resolve_credential_ref(
@@ -81,11 +79,11 @@ def create_services_of_app(username, data, force=False, organization_id=None):
                             "status": 400,
                         }
                     )
-                    resolution_failed = True
                     break
-            if resolution_failed:
+            else:
+                service["credential_refs"] = credential_refs
+            if "credential_refs" not in service:
                 continue
-            service["credential_refs"] = credential_refs
 
         last_service_id = insert_job(service)
         if last_service_id is None:
@@ -115,6 +113,8 @@ def create_services_of_app(username, data, force=False, organization_id=None):
             )
 
     # TODO(ME): check if service deployed already etc. force=True must force the insertion anyway
+    if not deployed_services and failed_services:
+        return {"message": failed_services[0]["message"], "failed_services": failed_services}, failed_services[0].get("status", 400)
     return {
         "job_id": str(last_service_id),
         "deployed_services": deployed_services,

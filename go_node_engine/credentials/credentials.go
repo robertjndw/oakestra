@@ -19,9 +19,12 @@ type Consumer interface {
 	Apply(opened OpenedCredential, ctx *PullContext) error
 }
 
-// PullContext carries containerd pull options that consumers can augment.
+// PullContext carries registry credentials that consumers populate during image pulls.
+// Consumers chain into CredsFn; later consumers take precedence for their host.
 type PullContext struct {
-	RemoteOpts []interface{} // containerd.RemoteOpt — typed as interface{} to avoid a circular dep
+	// CredsFn returns (username, password, nil) for a matching registry host,
+	// or ("", "", nil) to signal no credentials for that host.
+	CredsFn func(host string) (string, string, error)
 }
 
 var consumers []Consumer

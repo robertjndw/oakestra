@@ -16,7 +16,6 @@ from flask import request
 from flask.views import MethodView
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_smorest import Blueprint, abort
-from resource_abstractor_client import job_operations
 from roles.securityUtils import Role, get_jwt_auth_claims, get_jwt_organization
 
 from blueprints.schema_wrapper import SchemaWrapper
@@ -112,12 +111,10 @@ class CredentialsController(MethodView):
                 effective_org_id = None
 
         records = mongo_list_credentials(username, effective_org_id)
-        handler_map = {}
         result = []
         for r in records:
-            h = handler_map.get(r["type"]) or registry.get_handler(r["type"])
+            h = registry.get_handler(r["type"])
             if h:
-                handler_map[r["type"]] = h
                 result.append(h.public_view(r))
         return json_util.dumps(result)
 
@@ -257,12 +254,6 @@ class CredentialController(MethodView):
 
         if not _check_write_access(record, username, organization_id, claims):
             return abort(403, description="Access denied")
-
-        active_jobs = job_operations.get_jobs(
-            **{"credential_refs.credential_id": credential_id, "status": "RUNNING"}
-        )
-        if active_jobs:
-            return abort(409, description="Credential is referenced by active jobs and cannot be deleted")
 
         mongo_delete_credential(credential_id)
         logger.info(f"Credential deleted: id={credential_id} user={username}")
