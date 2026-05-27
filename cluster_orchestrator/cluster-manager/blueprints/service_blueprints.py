@@ -1,18 +1,15 @@
 import logging
 import traceback
 
-import config
 from bson import json_util
 from clients import job_management
 from clients.job_management import deploy_job
 from clients.mqtt_client import mqtt_publish_edge_deploy
 from ext_requests.network_manager_requests import network_notify_deployment
-from ext_requests.system_manager_requests import seal_credential_for_worker
 from flask import Response, request
 from flask.views import MethodView
 from flask_smorest import Blueprint, abort
 from oakestra_utils.types.statuses import (
-    DeploymentStatus,
     PositiveSchedulingStatus,
     convert_to_status,
 )
@@ -124,38 +121,7 @@ class SchedulingController(MethodView):
         # update network component
         network_notify_deployment(job_id, job)
 
-        credential_refs = job.get("credential_refs", [])
-        if credential_refs:
-            credentials_sealed = []
-            for ref in credential_refs:
-                sealed = seal_credential_for_worker(
-                    credential_id=ref["credential_id"],
-                    use_as=ref["use_as"],
-                    worker_id=node_id,
-                    job_id=job_id,
-                    instance_number=int(instance_number),
-                    cluster_id=str(config.MY_ASSIGNED_CLUSTER_ID),
-                )
-                if not sealed:
-                    cred_id = ref["credential_id"]
-                    logger.error(
-                        f"Failed to seal credential {cred_id} for worker {node_id} "
-                        f"— aborting deployment of job {job_id} instance {instance_number}"
-                    )
-                    job_management.update_status(
-                        job_id,
-                        int(instance_number),
-                        DeploymentStatus.FAILED.value,
-                        status_detail=f"credential sealing failed: {cred_id}",
-                    )
-                    return Response(json_util.dumps({"status": "ok"}), mimetype="application/json")
-                credentials_sealed.append(sealed)
-            job["credentials_sealed"] = credentials_sealed
-
-        # publish job (credentials_sealed is included only in the MQTT payload)
+        # publish job to worker (credentials embedded by root at dispatch time)
         mqtt_publish_edge_deploy(node_id, job, instance_number)
-
-        # Strip sealed credentials from the job doc so they are never persisted to cluster Mongo
-        job.pop("credentials_sealed", None)
 
         return Response(json_util.dumps({"status": "ok"}), mimetype="application/json")

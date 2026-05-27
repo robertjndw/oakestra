@@ -48,12 +48,4 @@ if [ $? -ne 0 ]; then
         exit 1
     fi
 
-# Prepare key directory for sealed-credential delivery
-OAK_KEY_DIR=/etc/oakestra/keys
-if [ ! -d "$OAK_KEY_DIR" ]; then
-    mkdir -p "$OAK_KEY_DIR"
-fi
-chmod 700 "$OAK_KEY_DIR"
-echo "🔑 Key directory $OAK_KEY_DIR ready (mode 700)"
-
 echo ✅ Installation complete

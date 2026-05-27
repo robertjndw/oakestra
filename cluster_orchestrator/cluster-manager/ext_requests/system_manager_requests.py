@@ -24,13 +24,8 @@ SYSTEM_MANAGER_ADDR = (
 
 def send_aggregated_info_to_sm(my_id, time_interval):
     try:
-        from clients.mqtt_client import get_and_clear_pending_worker_keys
-
         data = resource_aggregation.aggregate_info(time_interval)
         data.update({"jobs": job_management.aggregate_info(time_interval)})
-        worker_keys = get_and_clear_pending_worker_keys()
-        if worker_keys:
-            data["worker_keys"] = worker_keys
         logger.debug("sending aggregated info to system manager: %s", data)
         threading.Thread(group=None, target=send_aggregated_info, args=(my_id, data)).start()
         prometheus_set_metrics(data)
@@ -91,39 +86,3 @@ def cloud_request_incr_node(my_id):
         requests.get(request_addr)
     except requests.exceptions.RequestException:
         logger.error("Calling System Manager /api/cluster/../incr_node not successful.")
-
-
-def seal_credential_for_worker(
-    credential_id: str,
-    use_as: str,
-    worker_id: str,
-    job_id: str,
-    instance_number: int,
-    cluster_id: str,
-) -> dict | None:
-    """
-    Call root /api/credential/seal to get an HPKE-sealed credential for the given worker.
-    Returns the sealed credential dict, or None on failure.
-    """
-    url = SYSTEM_MANAGER_ADDR + "/api/credential/seal"
-    try:
-        resp = requests.post(
-            url,
-            json={
-                "credential_id": credential_id,
-                "use_as": use_as,
-                "worker_id": worker_id,
-                "job_id": job_id,
-                "instance_number": instance_number,
-            },
-            headers={"X-Cluster-Id": cluster_id},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return resp.json()
-        logger.error(
-            f"seal_credential_for_worker failed: {resp.status_code} {resp.text}"
-        )
-    except requests.exceptions.RequestException as e:
-        logger.error(f"seal_credential_for_worker request error: {e}")
-    return None

@@ -11,7 +11,6 @@ MONGO_ADDR_USERS = f"mongodb://{MONGO_URL}:{MONGO_PORT}/users"
 mongo_users = None
 mongo_organization = None
 mongo_credentials = None
-mongo_worker_keys = None
 
 app = None
 
@@ -21,7 +20,7 @@ logger = logging.getLogger("system_manager")
 
 
 def mongo_init(flask_app):
-    global app, mongo_users, mongo_organization, mongo_credentials, mongo_worker_keys
+    global app, mongo_users, mongo_organization, mongo_credentials
 
     app = flask_app
 
@@ -29,7 +28,6 @@ def mongo_init(flask_app):
     mongo_users = _db["user"]
     mongo_organization = _db["organization"]
     mongo_credentials = _db["credentials"]
-    mongo_worker_keys = _db["worker_keys"]
 
     from pymongo import ASCENDING
 
@@ -45,7 +43,6 @@ def mongo_init(flask_app):
         partialFilterExpression={"scope": "organization"},
         background=True,
     )
-    mongo_worker_keys.create_index("worker_id", unique=True, background=True)
 
     logger.info("MONGODB - init mongo")
     logger.info(mongo_users)

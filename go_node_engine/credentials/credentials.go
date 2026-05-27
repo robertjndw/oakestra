@@ -1,30 +1,16 @@
 package credentials
 
 import (
-	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"go_node_engine/keyset"
 	"go_node_engine/model"
-	"time"
 )
 
-const replayWindowSeconds = 300
-
-// OpenedCredential holds the decrypted value for one sealed credential.
+// OpenedCredential holds the decrypted value for one credential.
 type OpenedCredential struct {
 	UseAs string
 	Type  string
 	Value json.RawMessage
-}
-
-// DeployContext carries the deployment-level binding fields shared across all sealed credentials.
-// Per-credential fields (CredentialID, InstanceNumber, UnixTS) come from each SealedCredential.
-type DeployContext struct {
-	JobID    string
-	WorkerID string
-	KeyID    string
 }
 
 // Consumer applies an opened credential to a pull context.
@@ -45,62 +31,20 @@ func RegisterConsumer(c Consumer) {
 	consumers = append(consumers, c)
 }
 
-// Open decrypts all sealed credentials and returns the opened values.
-// Returns an error if any single credential cannot be opened; callers must not
-// proceed with the pull when an error is returned.
-func Open(sealed []model.SealedCredential, deployCtx DeployContext) ([]OpenedCredential, error) {
-	dec, err := keyset.GetHybridDecrypt()
-	if err != nil {
-		return nil, fmt.Errorf("credentials: keyset not available: %w", err)
-	}
-
-	now := time.Now().Unix()
+// Open converts a slice of plaintext credentials into OpenedCredentials ready
+// for dispatch.  Returns an error if any single credential is malformed.
+func Open(creds []model.Credential) ([]OpenedCredential, error) {
 	var opened []OpenedCredential
-
-	for _, s := range sealed {
-		// Replay window check
-		age := now - s.UnixTS
-		if age > replayWindowSeconds || age < -60 {
-			return nil, fmt.Errorf(
-				"credentials: rejecting credential use_as=%s — timestamp age %ds exceeds replay window",
-				s.UseAs, age,
-			)
+	for _, c := range creds {
+		if c.Value == nil {
+			return nil, fmt.Errorf("credentials: nil value for use_as=%s", c.UseAs)
 		}
-
-		// Check key_id matches what we have loaded
-		if s.KeyID != keyset.KeyID {
-			return nil, fmt.Errorf(
-				"credentials: key_id mismatch for use_as=%s: got %s, have %s — worker key may have rotated",
-				s.UseAs, s.KeyID, keyset.KeyID,
-			)
-		}
-
-		ctx := canonicalContextInfo(
-			s.CredentialID,
-			deployCtx.JobID,
-			s.InstanceNumber,
-			deployCtx.WorkerID,
-			deployCtx.KeyID,
-			s.UnixTS,
-		)
-
-		ciphertext, err := base64.StdEncoding.DecodeString(s.CiphertextB64())
-		if err != nil {
-			return nil, fmt.Errorf("credentials: base64 decode failed for use_as=%s: %w", s.UseAs, err)
-		}
-
-		plaintext, err := dec.Decrypt(ciphertext, ctx)
-		if err != nil {
-			return nil, fmt.Errorf("credentials: HPKE decrypt failed for use_as=%s: %w", s.UseAs, err)
-		}
-
 		opened = append(opened, OpenedCredential{
-			UseAs: s.UseAs,
-			Type:  s.Type,
-			Value: json.RawMessage(plaintext),
+			UseAs: c.UseAs,
+			Type:  c.Type,
+			Value: c.Value,
 		})
 	}
-
 	return opened, nil
 }
 
@@ -113,17 +57,4 @@ func Dispatch(opened OpenedCredential, pullCtx *PullContext) error {
 		}
 	}
 	return fmt.Errorf("credentials: no consumer registered for use_as=%s type=%s", opened.UseAs, opened.Type)
-}
-
-// canonicalContextInfo rebuilds the null-byte-separated binding string that root used as HPKE AAD.
-func canonicalContextInfo(credentialID, jobID string, instanceNumber int, workerID, keyID string, unixTS int64) []byte {
-	parts := [][]byte{
-		[]byte(credentialID),
-		[]byte(jobID),
-		[]byte(fmt.Sprintf("%d", instanceNumber)),
-		[]byte(workerID),
-		[]byte(keyID),
-		[]byte(fmt.Sprintf("%d", unixTS)),
-	}
-	return bytes.Join(parts, []byte{0x00})
 }

@@ -6,7 +6,6 @@ import (
 	"go_node_engine/credentials"
 	_ "go_node_engine/credentials/consumers" // register all credential consumers via init()
 	"go_node_engine/csi"
-	"go_node_engine/keyset"
 	"go_node_engine/logger"
 	"go_node_engine/model"
 	"go_node_engine/model/gpu"
@@ -176,12 +175,7 @@ func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificatio
 	// private registries and hide security bugs.
 	pullCtx := &credentials.PullContext{}
 	if len(service.Credentials) > 0 {
-		deployCtx := credentials.DeployContext{
-			JobID:    service.JobID,
-			WorkerID: model.GetNodeInfo().Id,
-			KeyID:    keyset.KeyID,
-		}
-		opened, err := credentials.Open(service.Credentials, deployCtx)
+		opened, err := credentials.Open(service.Credentials)
 		if err != nil {
 			return fmt.Errorf("credentials: open failed: %w", err)
 		}

@@ -17,6 +17,35 @@ def cluster_request_status(cluster_id):
         logger.error("Calling Cluster Orchestrator /status not successful.")
 
 
+def _embed_credentials(job: dict) -> None:
+    """
+    Resolve, decrypt, and materialize any credential_refs on the job, embedding
+    the plaintext credential values into job["credentials"] for delivery to the
+    cluster and worker.  Runs only when the credential subsystem is enabled.
+    Logs and skips individual refs that cannot be resolved rather than aborting,
+    since a partial failure is still surfaced via the missing credential at pull time.
+    """
+    from credentials.crypto import is_enabled
+    from credentials.resolver import CredentialError, materialize_credential
+
+    credential_refs = job.get("credential_refs", [])
+    if not credential_refs or not is_enabled():
+        return
+
+    materialized = []
+    for ref in credential_refs:
+        try:
+            materialized.append(
+                materialize_credential(ref["credential_id"], ref["use_as"])
+            )
+        except CredentialError as e:
+            logger.error(
+                f"Failed to materialize credential {ref.get('credential_id')}: {e}"
+            )
+    if materialized:
+        job["credentials"] = materialized
+
+
 def cluster_request_to_deploy(cluster_id, job_id, instance_number):
     cluster = candidate_operations.get_candidate_by_id(cluster_id)
     if cluster is None:
@@ -43,6 +72,7 @@ def cluster_request_to_deploy(cluster_id, job_id, instance_number):
             + str(instance_number)
         )
         job["_id"] = str(job["_id"])
+        _embed_credentials(job)
         logger.info(f"Deploy request to {cluster_addr}")
         requests.post(cluster_addr, json=job, timeout=10)
     except Exception as e:

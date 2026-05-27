@@ -4,12 +4,6 @@ from bson import json_util
 from credentials import registry
 from credentials.crypto import decrypt_payload, encrypt_payload
 from credentials.crypto import is_enabled as _credentials_enabled
-from credentials.resolver import (
-    CredentialError,
-    CredentialNotFoundError,
-    WorkerKeyNotFoundError,
-    seal_credential_for_worker,
-)
 from ext_requests.credentials_db import (
     mongo_create_credential,
     mongo_delete_credential,
@@ -18,15 +12,12 @@ from ext_requests.credentials_db import (
     mongo_update_credential,
 )
 from ext_requests.organization_db import mongo_get_roles_of_user_in_organization
-from ext_requests.worker_keys_db import mongo_get_worker_key
 from flask import request
 from flask.views import MethodView
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_smorest import Blueprint, abort
-from resource_abstractor_client import candidate_operations, job_operations
-from resource_abstractor_client.job_operations import get_job_instance
+from resource_abstractor_client import job_operations
 from roles.securityUtils import Role, get_jwt_auth_claims, get_jwt_organization
-from utils.network import sanitize
 
 from blueprints.schema_wrapper import SchemaWrapper
 
@@ -67,25 +58,6 @@ _create_schema = {
     "required": ["name", "type", "scope", "data"],
 }
 
-_update_schema = {
-    "type": "object",
-    "properties": {
-        "metadata": {"type": "object"},
-        "data": {"type": "object"},
-    },
-}
-
-_seal_schema = {
-    "type": "object",
-    "properties": {
-        "credential_id": {"type": "string"},
-        "use_as": {"type": "string"},
-        "worker_id": {"type": "string"},
-        "job_id": {"type": "string"},
-        "instance_number": {"type": "integer"},
-    },
-    "required": ["credential_id", "use_as", "worker_id", "job_id", "instance_number"],
-}
 
 
 def _is_admin(claims):
@@ -247,8 +219,6 @@ class CredentialController(MethodView):
         updates = {}
         existing_metadata = record.get("metadata", {}) or {}
         if "metadata" in data:
-            # Merge partial metadata with existing so callers can update individual
-            # fields without dropping required ones (e.g. DockerRegistry.username).
             merged_metadata = {**existing_metadata, **(data["metadata"] or {})}
             updates["metadata"] = merged_metadata
         else:
@@ -262,8 +232,6 @@ class CredentialController(MethodView):
                 return abort(400, description=str(e))
             updates["data_ciphertext"] = encrypt_payload(payload)
         elif "metadata" in data:
-            # Validate merged metadata against the existing decrypted payload so we
-            # don't persist metadata that the handler would reject.
             try:
                 existing_payload = decrypt_payload(record["data_ciphertext"])
                 handler.validate(existing_payload, merged_metadata)
@@ -290,7 +258,6 @@ class CredentialController(MethodView):
         if not _check_write_access(record, username, organization_id, claims):
             return abort(403, description="Access denied")
 
-        # Check if any active job references this credential
         active_jobs = job_operations.get_jobs(
             **{"credential_refs.credential_id": credential_id, "status": "RUNNING"}
         )
@@ -300,101 +267,3 @@ class CredentialController(MethodView):
         mongo_delete_credential(credential_id)
         logger.info(f"Credential deleted: id={credential_id} user={username}")
         return {"message": "Credential deleted"}
-
-
-@credentialblp.route("/seal")
-class CredentialSealController(MethodView):
-    @credentialblp.arguments(schema=_seal_schema, location="json", validate=False, unknown=True)
-    def post(self, *args, **kwargs):
-        """
-        Cluster-to-root callback: seal a credential for a specific worker.
-        Auth: X-Cluster-Id header must match a registered cluster.
-        """
-        cluster_id = request.headers.get("X-Cluster-Id")
-        if not cluster_id:
-            return abort(401, description="X-Cluster-Id header required")
-
-        cluster = candidate_operations.get_candidate_by_id(cluster_id)
-        if cluster is None:
-            return abort(401, description="Unknown cluster")
-
-        # Verify the caller's IP matches the registered cluster address so that a
-        # cluster cannot seal credentials for a different cluster's workers.
-        # Same limitation as /api/information: breaks with NAT/proxies. The right
-        # long-term fix is a token issued during the gRPC handshake. Until then we
-        # use remote_addr (not X-Forwarded-For, which is caller-controlled).
-        registered_ip = cluster.get("ip", "")
-        caller_ip = sanitize(request.remote_addr)
-        if registered_ip and caller_ip != registered_ip:
-            logger.warning(
-                f"Seal request IP mismatch: cluster_id={cluster_id} "
-                f"registered={registered_ip} caller={caller_ip}"
-            )
-            return abort(403, description="Caller IP does not match registered cluster IP")
-
-        data = request.get_json()
-        credential_id = data["credential_id"]
-        use_as = data["use_as"]
-        worker_id = data["worker_id"]
-        job_id = data["job_id"]
-        instance_number = int(data["instance_number"])
-
-        # Verify the target worker belongs to the calling cluster.
-        worker_key_record = mongo_get_worker_key(worker_id)
-        if worker_key_record is None or worker_key_record.get("cluster_id") != cluster_id:
-            return abort(403, description="Worker does not belong to this cluster")
-
-        # Verify job exists and references this credential
-        job = job_operations.get_job_by_id(job_id)
-        if job is None:
-            return abort(404, description="Job not found")
-
-        credential_refs = job.get("credential_refs", [])
-        if not any(
-            ref.get("credential_id") == credential_id and ref.get("use_as") == use_as
-            for ref in credential_refs
-        ):
-            return abort(403, description="Credential not referenced by this job")
-
-        # Verify that this specific instance was scheduled on the requesting cluster.
-        # The instance record's cluster_id is populated synchronously by
-        # instance_scale_up_scheduled_handler before the deploy request is sent to the
-        # cluster, so it is authoritative at /seal time. Without this check a malicious
-        # cluster could request seals for jobs scheduled on other clusters.
-        instance_record = get_job_instance(job_id, instance_number)
-        if instance_record is None:
-            return abort(404, description="Job instance not found")
-        if instance_record.get("cluster_id") != cluster_id:
-            logger.warning(
-                f"Seal request cluster mismatch: job={job_id} instance={instance_number} "
-                f"scheduled_on_cluster={instance_record.get('cluster_id')} "
-                f"requesting_cluster={cluster_id}"
-            )
-            return abort(403, description="Instance is not scheduled on the requesting cluster")
-
-        # The per-instance worker_id arrives later via the cluster's 15s aggregation push.
-        # When populated, enforce strict equality against the requested worker.
-        scheduled_worker = instance_record.get("worker_id")
-        if scheduled_worker and scheduled_worker != worker_id:
-            logger.warning(
-                f"Seal request worker mismatch: job={job_id} instance={instance_number} "
-                f"scheduled_on={scheduled_worker} requested_for={worker_id}"
-            )
-            return abort(403, description="Instance is not scheduled on the requested worker")
-
-        try:
-            sealed = seal_credential_for_worker(
-                credential_id=credential_id,
-                use_as=use_as,
-                worker_id=worker_id,
-                job_id=job_id,
-                instance_number=instance_number,
-            )
-        except CredentialNotFoundError as e:
-            return abort(404, description=str(e))
-        except WorkerKeyNotFoundError as e:
-            return abort(409, description=str(e))
-        except CredentialError as e:
-            return abort(400, description=str(e))
-
-        return sealed, 200
