@@ -71,7 +71,7 @@ fi
 # cleanup wipes the config directory, then re-persist after recreating it. The
 # key must remain stable or previously-encrypted credentials in Mongo become
 # undecryptable.
-OAK_ENV_FILE=~/.oakestra/root_orchestrator/.env
+OAK_ENV_FILE=~/.oakestra/.env
 if [ -z "$CREDENTIAL_ENCRYPTION_KEY" ] && [ -f "$OAK_ENV_FILE" ]; then
     PRESERVED_KEY=$(grep "^CREDENTIAL_ENCRYPTION_KEY=" "$OAK_ENV_FILE" 2>/dev/null | cut -d= -f2-)
     if [ -n "$PRESERVED_KEY" ]; then

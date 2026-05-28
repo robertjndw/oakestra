@@ -21,7 +21,13 @@ def _init_fernet() -> Fernet:
 
 
 def init_crypto() -> None:
-    """Call at startup to validate config and fail fast if anything is missing."""
+    """Call at startup to validate config and fail fast if anything is missing.
+
+    NOTE: All credentials are encrypted with a single static key. Rotating the
+    key requires re-encrypting every data_ciphertext document in the credentials
+    collection — there is no automated rotation utility. Back up the key and the
+    collection before attempting a manual rotation.
+    """
     global _credentials_enabled
     _init_fernet()
     _credentials_enabled = True

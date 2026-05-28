@@ -38,6 +38,28 @@ def insert_job(microservice):
     return str(new_job.get("_id"))
 
 
+def _resolve_all_credential_refs(microservices, username, organization_id):
+    """
+    Resolve credential references for every microservice up-front, before any
+    DB writes.  Returns a dict mapping microservice_name → resolved ref list.
+    Raises CredentialError on the first failure so the entire SLA is rejected
+    atomically instead of partially deploying.
+    """
+    resolved = {}
+    for microservice in microservices:
+        cred_refs_input = microservice.get("credentials", [])
+        if not cred_refs_input:
+            continue
+        refs = []
+        for cred_ref in cred_refs_input:
+            cred_id = resolve_credential_ref(
+                cred_ref["name"], cred_ref["use_as"], username, organization_id
+            )
+            refs.append({"credential_id": cred_id, "use_as": cred_ref["use_as"]})
+        resolved[microservice["microservice_name"]] = refs
+    return resolved
+
+
 def create_services_of_app(username, data, force=False, organization_id=None):
     logging.log(logging.DEBUG, data)
     try:
@@ -53,37 +75,22 @@ def create_services_of_app(username, data, force=False, organization_id=None):
     if application is None:
         return {"message": "application not found"}, 404
 
+    microservices = data.get("applications")[0].get("microservices") or []
+
+    try:
+        resolved_credential_refs = _resolve_all_credential_refs(microservices, username, organization_id)
+    except CredentialError as e:
+        return {"message": str(e), "deployed_services": [], "failed_services": []}, 400
+
     deployed_services = []
     failed_services = []
-    for microservice in data.get("applications")[0].get("microservices"):
+    for microservice in microservices:
         # Insert job into database
         service = generate_db_structure(application, microservice)
 
-        # Resolve credential references before inserting the job
-        cred_refs_input = microservice.get("credentials", [])
-        if cred_refs_input:
-            credential_refs = []
-            for cred_ref in cred_refs_input:
-                try:
-                    cred_id = resolve_credential_ref(
-                        cred_ref["name"], cred_ref["use_as"], username, organization_id
-                    )
-                    credential_refs.append(
-                        {"credential_id": cred_id, "use_as": cred_ref["use_as"]}
-                    )
-                except CredentialError as e:
-                    failed_services.append(
-                        {
-                            "service_name": service["service_name"],
-                            "message": str(e),
-                            "status": 400,
-                        }
-                    )
-                    break
-            else:
-                service["credential_refs"] = credential_refs
-            if "credential_refs" not in service:
-                continue
+        credential_refs = resolved_credential_refs.get(microservice["microservice_name"])
+        if credential_refs is not None:
+            service["credential_refs"] = credential_refs
 
         last_service_id = insert_job(service)
         if last_service_id is None:

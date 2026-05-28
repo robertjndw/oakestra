@@ -194,8 +194,8 @@ func buildResolver(credsFn func(string) (string, string, error), extraOpts ...do
 func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificationHandler func(service model.Service)) error {
 	var image containerd.Image
 
-	// Open any sealed credentials and build credential-aware pull options.
-	// If any credential cannot be opened or dispatched, abort the deploy rather
+	// Deserialize any plaintext credentials from the job and build credential-aware
+	// pull options. If any credential cannot be dispatched, abort the deploy rather
 	// than falling back to an unauthenticated pull that would silently fail on
 	// private registries and hide security bugs.
 	pullCtx := &credentials.PullContext{}
@@ -231,10 +231,12 @@ func (r *ContainerRuntime) Deploy(service model.Service, statusChangeNotificatio
 			// avoid crashing for HTTP based registires in local infrastructures
 			if strings.Contains(err.Error(), "http: server gave HTTP response to HTTPS client") {
 				alwaysPlainHTTP := func(string) (bool, error) { return true, nil }
-				image, err = r.containerClient.Pull(r.ctx, service.Image,
-					containerd.WithPullUnpack,
+				// Reuse remoteOpt (preserves WithPlatform and other opts already set).
+				// Cap the slice so append always allocates a fresh backing array.
+				httpOpts := append(remoteOpt[:len(remoteOpt):len(remoteOpt)],
 					buildResolver(pullCtx.CredsFn, docker_remote.WithPlainHTTP(alwaysPlainHTTP)),
 				)
+				image, err = r.containerClient.Pull(r.ctx, service.Image, httpOpts...)
 				if err != nil {
 					return err
 				}

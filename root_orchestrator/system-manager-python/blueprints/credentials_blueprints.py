@@ -11,6 +11,7 @@ from ext_requests.credentials_db import (
     mongo_list_credentials,
     mongo_update_credential,
 )
+from resource_abstractor_client import job_operations
 from ext_requests.organization_db import mongo_get_roles_of_user_in_organization
 from flask import request
 from flask.views import MethodView
@@ -124,17 +125,23 @@ class CredentialCreateController(MethodView):
     @credentialblp.arguments(schema=_create_schema, location="json", validate=False, unknown=True)
     @jwt_required()
     def post(self, *args, **kwargs):
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
+        for field in ("name", "type", "scope", "data"):
+            if field not in data or data[field] is None:
+                return abort(400, description=f"Missing required field: '{field}'")
+        if data["scope"] not in ("private", "organization"):
+            return abort(400, description="Invalid scope: must be 'private' or 'organization'")
+
         username = get_jwt_identity()
         organization_id = get_jwt_organization()
         claims = get_jwt_auth_claims()
 
-        cred_type = data.get("type")
+        cred_type = data["type"]
         handler = registry.get_handler(cred_type)
         if handler is None:
             return abort(400, description=f"Unknown credential type '{cred_type}'")
 
-        scope = data.get("scope")
+        scope = data["scope"]
         if scope == "organization":
             if not organization_id:
                 return abort(400, description="organization scope requires an organization context")
@@ -254,6 +261,12 @@ class CredentialController(MethodView):
 
         if not _check_write_access(record, username, organization_id, claims):
             return abort(403, description="Access denied")
+
+        active_jobs = job_operations.get_jobs(
+            **{"credential_refs.credential_id": credential_id, "status": "RUNNING"}
+        )
+        if active_jobs:
+            return abort(409, description="Credential is referenced by active jobs and cannot be deleted")
 
         mongo_delete_credential(credential_id)
         logger.info(f"Credential deleted: id={credential_id} user={username}")

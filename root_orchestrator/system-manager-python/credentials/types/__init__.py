@@ -50,7 +50,7 @@ class CredentialTypeHandler(ABC):
     @abstractmethod
     def materialize(self, payload: dict, metadata: dict, use_as: str) -> dict:
         """
-        Produce the JSON-serialisable value that travels (sealed) to the worker.
-        This is what the worker decrypts and hands to its consumer.
+        Produce the JSON-serialisable value that travels to the worker.
+        This is what the worker deserializes and hands to its consumer.
         """
         ...

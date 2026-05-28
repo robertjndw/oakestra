@@ -28,8 +28,13 @@ def _embed_credentials(job: dict) -> None:
     from credentials.resolver import CredentialError, materialize_credential
 
     credential_refs = job.get("credential_refs", [])
-    if not credential_refs or not is_enabled():
+    if not credential_refs:
         return
+    if not is_enabled():
+        raise RuntimeError(
+            "Job has credential_refs but the credential subsystem is disabled — "
+            "set CREDENTIAL_ENCRYPTION_KEY to enable it"
+        )
 
     materialized = []
     for ref in credential_refs:
@@ -55,22 +60,27 @@ def cluster_request_to_deploy(cluster_id, job_id, instance_number):
         logger.error(f"Job with {job_id} not found.")
         return
 
+    job["_id"] = str(job["_id"])
+    try:
+        _embed_credentials(job)
+    except RuntimeError as e:
+        logger.error(f"Cannot deploy job {job_id} instance {instance_number}: {e}")
+        return
+
+    cluster_addr = (
+        "http://"
+        + sanitize(cluster.get("ip"), request=True)
+        + ":"
+        + str(cluster.get("port"))
+        + "/api/service/"
+        + str(job_id)
+        + "/"
+        + str(instance_number)
+    )
     try:
         logger.debug(
-            f"Preparing deploy request for job {job} instance {instance_number} to cluster {cluster}"
+            f"Preparing deploy request for job {job_id} instance {instance_number} to cluster {cluster_addr}"
         )
-        cluster_addr = (
-            "http://"
-            + sanitize(cluster.get("ip"), request=True)
-            + ":"
-            + str(cluster.get("port"))
-            + "/api/service/"
-            + str(job_id)
-            + "/"
-            + str(instance_number)
-        )
-        job["_id"] = str(job["_id"])
-        _embed_credentials(job)
         logger.info(f"Deploy request to {cluster_addr}")
         requests.post(cluster_addr, json=job, timeout=10)
     except Exception as e:
@@ -125,6 +135,12 @@ def cluster_request_to_delete_job_by_ip(job_id, instance_number, ip):
 
 
 def cluster_request_to_replicate_up(cluster_obj, job_obj, int_replicas):
+    try:
+        _embed_credentials(job_obj)
+    except RuntimeError as e:
+        logger.error(f"Cannot replicate job: {e}")
+        return
+
     cluster_addr = (
         "http://"
         + sanitize(cluster_obj.get("ip"), request=True)
