@@ -11,12 +11,12 @@ from ext_requests.credentials_db import (
     mongo_list_credentials,
     mongo_update_credential,
 )
-from resource_abstractor_client import job_operations
 from ext_requests.organization_db import mongo_get_roles_of_user_in_organization
 from flask import request
 from flask.views import MethodView
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_smorest import Blueprint, abort
+from resource_abstractor_client import job_operations
 from roles.securityUtils import Role, get_jwt_auth_claims, get_jwt_organization
 
 from blueprints.schema_wrapper import SchemaWrapper
