@@ -5,7 +5,7 @@ from ext_requests.credentials_db import (
     mongo_get_credential_by_name_and_org,
     mongo_get_credential_by_name_and_owner,
 )
-from ext_requests.organization_db import mongo_get_roles_of_user_in_organization
+from ext_requests.organization_db import user_is_org_member
 
 from credentials import registry
 from credentials.crypto import decrypt_payload
@@ -36,12 +36,10 @@ def resolve_credential_ref(
     record = mongo_get_credential_by_name_and_owner(name, username)
     if record is None and organization_id:
         record = mongo_get_credential_by_name_and_org(name, organization_id)
-        if record is not None:
-            roles = mongo_get_roles_of_user_in_organization(username, organization_id)
-            if not roles:
-                raise CredentialPermissionError(
-                    f"Credential '{name}' is organization-scoped but user is not a member"
-                )
+        if record is not None and not user_is_org_member(username, organization_id):
+            raise CredentialPermissionError(
+                f"Credential '{name}' is organization-scoped but user is not a member"
+            )
 
     if record is None:
         raise CredentialNotFoundError(f"Credential '{name}' not found or not accessible")

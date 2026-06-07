@@ -5,8 +5,8 @@ class CredentialTypeHandler(ABC):
     """
     Base class for all credential type handlers.
 
-    A handler defines the schema, validation logic, and serialization rules for
-    one credential type.  Adding a new type is as simple as subclassing this,
+    A handler defines the validation logic and serialization rules for one
+    credential type.  Adding a new type is as simple as subclassing this,
     overriding the abstract members, and calling `registry.register()`.
     """
 
@@ -14,18 +14,6 @@ class CredentialTypeHandler(ABC):
     @abstractmethod
     def type_name(self) -> str:
         """Unique type discriminator stored in MongoDB, e.g. 'DockerRegistry'."""
-        ...
-
-    @property
-    @abstractmethod
-    def payload_schema(self) -> dict:
-        """JSON-schema for the secret blob that is Fernet-encrypted at rest."""
-        ...
-
-    @property
-    @abstractmethod
-    def metadata_schema(self) -> dict:
-        """JSON-schema for the public metadata stored unencrypted alongside the credential."""
         ...
 
     @property

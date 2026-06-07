@@ -59,6 +59,11 @@ def mongo_get_roles_of_user_in_organization(user_id, organization_id):
     return roles
 
 
+def user_is_org_member(user_id, organization_id):
+    """True if the user holds any role in the organization (i.e. is a member)."""
+    return bool(mongo_get_roles_of_user_in_organization(user_id, organization_id))
+
+
 def mongo_delete_all_role_entrys_of_user(user_id):
     organization = list(db.mongo_organization.find())
     for o in organization:

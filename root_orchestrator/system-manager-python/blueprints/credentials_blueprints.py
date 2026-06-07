@@ -11,7 +11,10 @@ from ext_requests.credentials_db import (
     mongo_list_credentials,
     mongo_update_credential,
 )
-from ext_requests.organization_db import mongo_get_roles_of_user_in_organization
+from ext_requests.organization_db import (
+    mongo_get_roles_of_user_in_organization,
+    user_is_org_member,
+)
 from flask import request
 from flask.views import MethodView
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -60,6 +63,11 @@ _create_schema = {
 
 
 
+def _jwt_principal():
+    """Return (username, organization_id, claims) for the current request."""
+    return get_jwt_identity(), get_jwt_organization(), get_jwt_auth_claims()
+
+
 def _is_admin(claims):
     return Role.ADMIN in claims.get("roles", [])
 
@@ -72,8 +80,7 @@ def _check_read_access(record, username, organization_id, claims):
     if record["scope"] == "organization":
         if not organization_id or record.get("organization_id") != organization_id:
             return False
-        roles = mongo_get_roles_of_user_in_organization(username, organization_id)
-        return bool(roles)
+        return user_is_org_member(username, organization_id)
     return False
 
 
@@ -97,9 +104,7 @@ class CredentialsController(MethodView):
     @credentialsblp.response(200, SchemaWrapper({"type": "array"}), content_type="application/json")
     @jwt_required()
     def get(self, *args, **kwargs):
-        username = get_jwt_identity()
-        organization_id = get_jwt_organization()
-        claims = get_jwt_auth_claims()
+        username, organization_id, claims = _jwt_principal()
 
         # The `organization` JWT claim is set from the org name supplied at login
         # and is NOT a proof of membership. Re-verify membership here before
@@ -107,8 +112,7 @@ class CredentialsController(MethodView):
         # could enumerate any organization's credential metadata.
         effective_org_id = organization_id
         if effective_org_id and not _is_admin(claims):
-            roles = mongo_get_roles_of_user_in_organization(username, effective_org_id)
-            if not roles:
+            if not user_is_org_member(username, effective_org_id):
                 effective_org_id = None
 
         records = mongo_list_credentials(username, effective_org_id)
@@ -132,9 +136,7 @@ class CredentialCreateController(MethodView):
         if data["scope"] not in ("private", "organization"):
             return abort(400, description="Invalid scope: must be 'private' or 'organization'")
 
-        username = get_jwt_identity()
-        organization_id = get_jwt_organization()
-        claims = get_jwt_auth_claims()
+        username, organization_id, claims = _jwt_principal()
 
         cred_type = data["type"]
         handler = registry.get_handler(cred_type)
@@ -185,9 +187,7 @@ class CredentialCreateController(MethodView):
 class CredentialController(MethodView):
     @jwt_required()
     def get(self, credential_id, *args, **kwargs):
-        username = get_jwt_identity()
-        organization_id = get_jwt_organization()
-        claims = get_jwt_auth_claims()
+        username, organization_id, claims = _jwt_principal()
 
         record = mongo_get_credential_by_id(credential_id)
         if record is None:
@@ -204,9 +204,7 @@ class CredentialController(MethodView):
 
     @jwt_required()
     def put(self, credential_id, *args, **kwargs):
-        username = get_jwt_identity()
-        organization_id = get_jwt_organization()
-        claims = get_jwt_auth_claims()
+        username, organization_id, claims = _jwt_principal()
 
         record = mongo_get_credential_by_id(credential_id)
         if record is None:
@@ -251,9 +249,7 @@ class CredentialController(MethodView):
 
     @jwt_required()
     def delete(self, credential_id, *args, **kwargs):
-        username = get_jwt_identity()
-        organization_id = get_jwt_organization()
-        claims = get_jwt_auth_claims()
+        username, organization_id, claims = _jwt_principal()
 
         record = mongo_get_credential_by_id(credential_id)
         if record is None:

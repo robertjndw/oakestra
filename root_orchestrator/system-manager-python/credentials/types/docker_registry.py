@@ -14,23 +14,8 @@ class DockerRegistryHandler(CredentialTypeHandler):
 
     type_name = "DockerRegistry"
 
-    payload_schema = {
-        "type": "object",
-        "properties": {
-            "password": {"type": "string"},
-        },
-        "required": ["password"],
-    }
-
-    metadata_schema = {
-        "type": "object",
-        "properties": {
-            "username": {"type": "string"},
-            "registry": {"type": "string"},
-            "comment": {"type": "string"},
-        },
-        "required": ["username"],
-    }
+    # Registry host assumed when a credential omits one (Docker Hub).
+    DEFAULT_REGISTRY = "docker.io"
 
     valid_uses = {"image_pull"}
 
@@ -48,7 +33,7 @@ class DockerRegistryHandler(CredentialTypeHandler):
             "type": record["type"],
             "scope": record["scope"],
             "username": meta.get("username"),
-            "registry": meta.get("registry", "docker.io"),
+            "registry": meta.get("registry", self.DEFAULT_REGISTRY),
             "comment": meta.get("comment"),
             "owner_user_id": record.get("owner_user_id"),
             "organization_id": record.get("organization_id"),
@@ -60,5 +45,5 @@ class DockerRegistryHandler(CredentialTypeHandler):
         return {
             "username": metadata.get("username"),
             "password": payload["password"],
-            "registry": metadata.get("registry", "docker.io"),
+            "registry": metadata.get("registry", self.DEFAULT_REGISTRY),
         }

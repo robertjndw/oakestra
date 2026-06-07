@@ -4,7 +4,6 @@ import os
 from cryptography.fernet import Fernet
 
 _fernet: Fernet | None = None
-_credentials_enabled: bool = False
 
 
 def _init_fernet() -> Fernet:
@@ -28,14 +27,12 @@ def init_crypto() -> None:
     collection — there is no automated rotation utility. Back up the key and the
     collection before attempting a manual rotation.
     """
-    global _credentials_enabled
     _init_fernet()
-    _credentials_enabled = True
 
 
 def is_enabled() -> bool:
-    """Return True only when init_crypto() completed successfully."""
-    return _credentials_enabled
+    """Return True once the Fernet key has been successfully loaded."""
+    return _fernet is not None
 
 
 def encrypt_payload(data: dict) -> str:
