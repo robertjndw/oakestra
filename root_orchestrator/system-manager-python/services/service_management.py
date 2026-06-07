@@ -56,7 +56,8 @@ def _resolve_all_credential_refs(microservices, username, organization_id):
                 cred_ref["name"], cred_ref["use_as"], username, organization_id
             )
             refs.append({"credential_id": cred_id, "use_as": cred_ref["use_as"]})
-        resolved[microservice["microservice_name"]] = refs
+        key = (microservice["microservice_name"], microservice["microservice_namespace"])
+        resolved[key] = refs
     return resolved
 
 
@@ -88,7 +89,9 @@ def create_services_of_app(username, data, force=False, organization_id=None):
         # Insert job into database
         service = generate_db_structure(application, microservice)
 
-        credential_refs = resolved_credential_refs.get(microservice["microservice_name"])
+        credential_refs = resolved_credential_refs.get(
+            (microservice["microservice_name"], microservice["microservice_namespace"])
+        )
         if credential_refs is not None:
             service["credential_refs"] = credential_refs
 

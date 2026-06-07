@@ -46,7 +46,10 @@ class ServiceController(MethodView):
         job = request.json  # contains job_id and job_description
 
         try:
-            logger.info(f"Received deployment request for instance {instance_number} of {job}")
+            logger.info(
+                f"Received deployment request for instance {instance_number} of job "
+                f"{job.get('job_name', job.get('_id', '?'))}"
+            )
             deploy_job(job, instance_number)
         except Exception as e:
             logger.error(f"Deployment Failed: {e}")
