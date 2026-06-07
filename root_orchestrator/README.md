@@ -24,6 +24,67 @@ export SYSTEM_MANAGER_URL=<IP ADDRESS OF THE NODE HOSTING THE ROOT ORCHESTRATOR>
 
 Then set the docker-compose.yml with `docker-compose -f docker-compose.yml up --build` to start the root components.
 
+## Credential Management
+
+The System Manager includes a generic credential store for secrets such as
+private container-registry logins. Secrets are
+[Fernet](https://cryptography.io/en/latest/fernet/)-encrypted at rest in the
+`credentials` collection of the root MongoDB (`users` database).
+
+### Configuration
+
+The store requires a 32-byte url-safe base64 Fernet key in the
+`CREDENTIAL_ENCRYPTION_KEY` environment variable on `system_manager`. The
+startup scripts (`StartOakestraFull.sh`, `StartOakestraRoot.sh`) generate one on
+first run and persist it to `~/.oakestra/.env`, preserving it across restarts.
+
+> The key must stay stable: rotating it makes every previously-encrypted
+> credential undecryptable. Back up `~/.oakestra/.env`.
+
+If the key is unset the subsystem is disabled and **all `/api/credential*`
+endpoints return `503`** while the rest of the orchestrator runs normally.
+
+### REST API
+
+All endpoints require a JWT Bearer token.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/credentials` | List credentials accessible to the caller (public view, never secrets). |
+| `POST` | `/api/credential` | Create a credential. |
+| `GET` | `/api/credential/<id>` | Get one credential's public view. |
+| `PUT` | `/api/credential/<id>` | Update metadata and/or secret data. |
+| `DELETE` | `/api/credential/<id>` | Delete a credential (409 if referenced by a RUNNING job). |
+
+Credentials are scoped `private` (owner-only) or `organization` (shared with an
+organization). Creating or modifying an organization-scoped credential requires
+the `Organization_Admin` role.
+
+Create example (a Docker registry login):
+
+```json
+{
+  "name": "my-registry",
+  "type": "DockerRegistry",
+  "scope": "private",
+  "metadata": { "username": "alice", "registry": "ghcr.io" },
+  "data": { "password": "<token>" }
+}
+```
+
+### Using credentials in an SLA
+
+A microservice references credentials by name; the secret value is never placed
+in the SLA:
+
+```json
+"credentials": [ { "name": "my-registry", "use_as": "image_pull" } ]
+```
+
+On deployment the root resolves each reference to a stored credential, decrypts
+it, and embeds the plaintext value in the job payload sent to the cluster and
+worker (channels are assumed trusted, so no in-transit encryption is applied).
+
 ## Custom Library Dependency
 
 Per default, pip will build the python dependencies found `libraries/` (resource_abstractor_client and oakestra_utils_library) from the oakestra github

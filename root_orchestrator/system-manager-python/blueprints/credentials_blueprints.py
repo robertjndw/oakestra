@@ -104,6 +104,13 @@ class CredentialsController(MethodView):
     @credentialsblp.response(200, SchemaWrapper({"type": "array"}), content_type="application/json")
     @jwt_required()
     def get(self, *args, **kwargs):
+        """List credentials accessible to the caller.
+
+        Returns the public view (never secret material) of every private
+        credential owned by the caller plus every organization-scoped
+        credential of an organization the caller belongs to. Requires a JWT
+        Bearer token. Returns 503 if the credential subsystem is disabled.
+        """
         username, organization_id, claims = _jwt_principal()
 
         # The `organization` JWT claim is set from the org name supplied at login
@@ -129,6 +136,14 @@ class CredentialCreateController(MethodView):
     @credentialblp.arguments(schema=_create_schema, location="json", validate=False, unknown=True)
     @jwt_required()
     def post(self, *args, **kwargs):
+        """Create a credential.
+
+        Body: ``{name, type, scope, metadata?, data}`` where ``data`` holds the
+        secret (Fernet-encrypted at rest) and ``scope`` is ``private`` or
+        ``organization``. Creating an organization-scoped credential requires the
+        Organization_Admin role. Returns 201 with the new ``_id`` on success,
+        409 if the name already exists, or 503 if the subsystem is disabled.
+        """
         data = request.get_json(silent=True) or {}
         for field in ("name", "type", "scope", "data"):
             if field not in data or data[field] is None:
@@ -187,6 +202,11 @@ class CredentialCreateController(MethodView):
 class CredentialController(MethodView):
     @jwt_required()
     def get(self, credential_id, *args, **kwargs):
+        """Get a single credential's public view (no secret material).
+
+        The caller must own the credential, be an Admin, or be a member of the
+        owning organization. Returns 403 if not authorized, 404 if not found.
+        """
         username, organization_id, claims = _jwt_principal()
 
         record = mongo_get_credential_by_id(credential_id)
@@ -204,6 +224,13 @@ class CredentialController(MethodView):
 
     @jwt_required()
     def put(self, credential_id, *args, **kwargs):
+        """Update a credential's metadata and/or secret data.
+
+        Body may contain ``metadata`` (merged into existing) and/or ``data`` (the
+        secret, re-encrypted). Requires write access: ownership, Admin, or
+        Organization_Admin of the owning organization. Returns 400 if no
+        updatable fields are supplied.
+        """
         username, organization_id, claims = _jwt_principal()
 
         record = mongo_get_credential_by_id(credential_id)
@@ -249,6 +276,11 @@ class CredentialController(MethodView):
 
     @jwt_required()
     def delete(self, credential_id, *args, **kwargs):
+        """Delete a credential.
+
+        Requires write access (ownership, Admin, or Organization_Admin). Returns
+        409 if the credential is still referenced by a RUNNING job.
+        """
         username, organization_id, claims = _jwt_principal()
 
         record = mongo_get_credential_by_id(credential_id)
