@@ -298,20 +298,32 @@ docker exec cluster_redis redis-cli -p 6479 -a clusterRedis llen "asynq:{schedul
 
 ## STEP 6 — MQTT Broker Diagnostics (Cluster)
 
+The broker is NATS 2.14 running in MQTT-compatibility mode (image `nats:2.14`).
+It does NOT show a Docker health status (scratch-based image, no in-container
+healthcheck). Use the NATS HTTP monitoring endpoint instead.
+
 ```bash
-# Check MQTT health (has a built-in healthcheck)
-docker inspect mqtt --format '{{.State.Health.Status}}' 2>/dev/null
+# Check the NATS server is up and accepting connections (from another container)
+docker exec cluster_manager curl -sf http://mqtt:8222/healthz || echo "WARN: NATS not healthy"
 
-# Check MQTT is accepting connections
-docker exec mqtt mosquitto_sub -h localhost -p 10003 -t '$SYS/#' -C 1 --timeout 5 2>/dev/null | head -5 || echo "WARN: MQTT not accepting connections"
+# From the host (8222 is not published externally, use docker network)
+docker run --rm --network oakestra curlimages/curl -sf http://mqtt:8222/healthz
 
-# Check MQTT logs for refused connections or auth errors
-docker logs mqtt 2>&1 | tail -50 | grep -iE "error|refused|disconnect|auth"
+# Check MQTT logs for startup messages (look for "Listening for MQTT clients on port 10003")
+docker logs mqtt 2>&1 | tail -50
+
+# Check for MQTT connection errors in NATS logs
+docker logs mqtt 2>&1 | tail -50 | grep -iE "error|refused|disconnect|auth|mqtt"
+
+# Verify JetStream is enabled (required for MQTT QoS 1 + sessions)
+docker logs mqtt 2>&1 | grep -i jetstream
 ```
 
-If MQTT is not healthy, `cluster_manager` and `cluster_service_manager` cannot communicate with worker NodeEngines. This blocks all deployment.
+If the NATS container is not running, `cluster_manager` and `cluster_service_manager`
+cannot communicate with worker NodeEngines. This blocks all deployment.
 
-Check if `override-mosquitto-auth.yml` is being used — if so, authentication credentials must be provided; without them, workers cannot connect.
+NATS runs in anonymous mode by default (no credentials needed). MQTT TLS auth is
+not yet configured; if you see auth errors, verify no auth override is being applied.
 
 ---
 
@@ -704,8 +716,12 @@ docker volume rm <volume_name>
 ```bash
 # Check firewall on cluster machine for port 10003
 sudo ufw allow 10003/tcp
-# Verify MQTT is listening externally (not just 127.0.0.1)
+# Verify MQTT (NATS) is listening externally (not just 127.0.0.1)
 ss -tlnp sport = :10003
+# Check NATS is healthy inside the oakestra docker network
+docker exec cluster_manager curl -sf http://mqtt:8222/healthz || echo "NATS not healthy"
+# Check NATS logs for MQTT listener startup
+docker logs mqtt 2>&1 | grep -i "10003"
 ```
 
 ### Fix: Docker socket permission denied

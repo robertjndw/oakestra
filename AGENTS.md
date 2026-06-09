@@ -86,7 +86,7 @@ Root Orchestrator  (1 per deployment)
 | `cluster_scheduler` | Go | 10105 | Picks which worker to place a job on. Same binary as root_scheduler; different env vars. |
 | `cluster_resource_abstractor` | Python/Flask | 11012 | Same binary as root; points at cluster_mongo. |
 | `cluster_redis` | Redis | 6479 (pw: `clusterRedis`) | Job queue for cluster_scheduler. |
-| `mqtt` | Eclipse Mosquitto 2.0 | 10003 | Broker for cluster↔worker communication. Has a built-in healthcheck. |
+| `mqtt` | NATS 2.14 (MQTT mode) | 10003 (MQTT), 8222 (HTTP monitoring) | Broker for cluster↔worker communication. MQTT compatibility mode with JetStream enabled. Health probed at http://mqtt:8222/healthz. |
 | `cluster_addons_manager` | Python | 11201 | Cluster-level addons manager (optional, disable with override-no-addons.yml). |
 | `cluster_addons_monitor` | Python | — | Monitors running addon containers via docker socket at cluster level. |
 | `cluster_addons_dashboard` | Python | 11203 | Cluster addons UI. |
@@ -141,7 +141,7 @@ export OVERRIDE_FILES="override-no-addons.yml,override-network-host.yml"
 | `override-no-addons.yml` | Removes addons subsystem from root. |
 | `override-no-dashboard.yml` | Removes frontend dashboard from root. |
 | `override-no-observe.yml` | Removes Grafana/Loki/Promtail/Prometheus. |
-| `override-mosquitto-auth.yml` | Enables MQTT authentication (workers need credentials). |
+| `override-mosquitto-auth.yml` | ~~Removed~~ Previously enabled MQTT/TLS auth via Mosquitto. NATS TLS auth is a planned follow-up. |
 | `override-images-only.yml` | Forces pre-built images, skips local builds. |
 | `override-local-service-manager.yml` | Builds service manager from local source. |
 | `override-custom-service-manager-version.yml` | Pins `oakestra-net` service manager images to a specific version (e.g. `alpha-v0.4.403`). Useful for testing against a particular `oakestra-net` release. |
@@ -158,7 +158,7 @@ export OVERRIDE_FILES="override-no-addons.yml,override-network-host.yml"
 | root/cluster scheduler | Go 1.24 | gin, asynq (Redis-backed task queue) |
 | NodeEngine | Go | paho-mqtt, cobra CLI |
 | Databases | MongoDB 8.0, Redis | — |
-| Messaging | Eclipse Mosquitto 2.0 (MQTT) | — |
+| Messaging | NATS 2.14 in MQTT compatibility mode | — |
 | Networking | oakestra-net (external Go repo) | — |
 | Observability | Grafana, Loki 2.9.2, Promtail 2.9.2, Prometheus | — |
 

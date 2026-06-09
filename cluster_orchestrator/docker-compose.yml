@@ -9,21 +9,24 @@ x-logging:
 
 services:
 
-  # MQTT 
+  # MQTT (NATS in MQTT-compatibility mode)
   mqtt:
-    image: eclipse-mosquitto:2.0
+    # alpine variant is required: the default nats image is distroless (no shell/wget),
+    # which makes a healthcheck against the HTTP monitoring port impossible.
+    image: nats:2.14-alpine
     hostname: mqtt
     container_name: mqtt
     expose:
       - "10003"
+      - "8222"
     ports:
       - "10003:10003"
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
-      - /mosquitto/data
-      - /mosquitto/log
+      - ./nats/nats.conf:/etc/nats/nats.conf
+      - nats_cluster_data:/data
+    command: ["-c", "/etc/nats/nats.conf"]
     healthcheck:
-      test: [ "CMD-SHELL", "mosquitto_sub -p 10003 -t '$$SYS/#' -C 1 -W 3 || exit 1" ]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8222/healthz || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 6
@@ -294,6 +297,8 @@ volumes:
   mongodb_cluster_data:
     driver: local
   mongodb_cluster_net_data:
+    driver: local
+  nats_cluster_data:
     driver: local
 
 networks:

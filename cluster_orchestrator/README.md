@@ -122,62 +122,9 @@ Example: IPv6 server receiving IPv4 request -> source address is in 4-to-6 mappe
 
 Usage: `docker-compose -f docker-compose.yml -f override-no-observe.yml`
 
-### Enable mosquitto authentication
+### MQTT TLS authentication
 
-In case the intra-cluster communication should use MQTT over TLS you can use the mosquitto auth override:
-`docker-compose -f docker-compose.yml -f override-mosquitto-auth.yml`.
-
-First you will have to edit the mosquitto config file and provide the required certificates:
-1. Modify the mosquitto/mosquitto.conf file by uncommenting the lines below `configure authentication:`
-2. Generate the certificates in the `./certs` directory\
-**This process can be automated with the [automation](https://github.com/oakestra/automation/tree/d286df625dc805c901968f119605f1c605a19d11/development_cluster_management/generate_mqtts_certificates) scripts**\
-Be sure to give each component a unique Organizational Unit Name\
-**MQTTS (Server):**
-   1. Generate CA authority key:
-      `openssl req -new -x509 -days <duration> -extensions v3_ca -keyout ca.key -out ca.crt`
-   2. Generate a server key:\
-      `openssl genrsa -out server.key 2048`
-   3. Generate a certificate signing request including the URL as a SAN:\
-      `openssl req -out server.csr -key server.key -new -addext "subjectAltName = IP:${SYSTEM_MANAGER_URL}, DNS:mqtts"`\
-       When prompted for the CN, enter `mqtts`
-   4. Send the CSR to the CA\
-       `openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days <duration> -copy_extensions copyall`
-   5. Grant permissions to read the server keyfile:\
-        `chmod 0644 server.key`\
-**Cluster Manager (Client):**
-   6. Generate a client key:\
-        `openssl genrsa -aes256 -out cluster.key 2048`
-   7. Generate a certificate signing request:\
-        `openssl req -out cluster.csr -key cluster.key -new`\
-        When prompted for the CN, enter `cluster_manager`
-   8. Send the CSR to the CA:
-        `openssl x509 -req -in cluster.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out cluster.crt -days <duration>`
-   9. Export the keyfile password as an environmental variable:\
-        `export CLUSTER_KEYFILE_PASSWORD=<keyfile password>`\
-**Cluster Service Manager (Client):**
-   6. Generate a client key:\
-      `openssl genrsa -aes256 -out cluster_net.key 2048`
-   7. Generate a certificate signing request:\
-      `openssl req -out cluster_net.csr -key cluster_net.key -new`\
-      When prompted for the CN, enter `cluster_service_manager`
-   8. Send the CSR to the CA:
-      `openssl x509 -req -in cluster_net.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out cluster_net.crt -days <duration>`
-   9. Export the keyfile password as an environmental variable:\
-      `export CLUSTER_SERVICE_KEYFILE_PASSWORD=<keyfile password>`\
-**Node Engine (Client):**\
-You will have to copy the ca.crt and ca.key file to node machine
-   10. Generate a client key:\
-       `openssl genrsa -aes256 -out client.key 2048`
-   11. Generate a certificate signing request:\
-       `openssl req -out client.csr -key client.key -new`\
-       When prompted for the CN, enter the IP of the machine
-   12. Send the CSR to the CA:\
-       `openssl x509 -req -in client.csr -CA <path to ca file> -CAkey <path to ca key file> -CAcreateserial -out client.crt -days <duration>`
-   13. Decrypt the keyfile:\
-        `openssl rsa -in client.key -out unencrypt_client.key`
-   14. Tell your OS to trust the certificate authority by placing the ca.crt file in the `/etc/ssl/certs/` directory
-   15. Run the NodeEngine:\
-       `sudo ./go_node_engine -n 0 -p 10100 -a <SYSTEM_MANAGER_URL> -c <path to client.crt> -k <path to unencrypt_client.key>`
-
-Instructions from [Mosquitto-TLS man page](https://mosquitto.org/man/mosquitto-tls-7.html).\
-This is for self-signed certificates, can be adapted for trusted certificates.
+The cluster uses NATS in MQTT-compatibility mode (see `nats/nats.conf`). Anonymous
+access is enabled by default. TLS/cert-based MQTT authentication via a NATS
+`mqtt { tls { ... } }` config block is planned as a follow-up and will replace
+the old Mosquitto cert-auth approach.
