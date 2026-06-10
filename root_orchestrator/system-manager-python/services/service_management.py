@@ -1,5 +1,6 @@
 import logging
 
+from credentials.crypto import is_enabled as credentials_enabled
 from credentials.resolver import CredentialError, resolve_credential_ref
 from ext_requests.net_plugin_requests import net_inform_service_deploy, net_inform_service_undeploy
 from resource_abstractor_client import app_operations, job_operations
@@ -50,6 +51,11 @@ def _resolve_all_credential_refs(microservices, username, organization_id):
         cred_refs_input = microservice.get("credentials", [])
         if not cred_refs_input:
             continue
+        if not credentials_enabled():
+            raise CredentialError(
+                "SLA references credentials but the credential subsystem is disabled - "
+                "set CREDENTIAL_ENCRYPTION_KEY on the system manager to enable it"
+            )
         refs = []
         for cred_ref in cred_refs_input:
             cred_id = resolve_credential_ref(
@@ -79,7 +85,9 @@ def create_services_of_app(username, data, force=False, organization_id=None):
     microservices = data.get("applications")[0].get("microservices") or []
 
     try:
-        resolved_credential_refs = _resolve_all_credential_refs(microservices, username, organization_id)
+        resolved_credential_refs = _resolve_all_credential_refs(
+            microservices, username, organization_id
+        )
     except CredentialError as e:
         return {"message": str(e), "deployed_services": [], "failed_services": []}, 400
 
@@ -124,7 +132,11 @@ def create_services_of_app(username, data, force=False, organization_id=None):
 
     # TODO(ME): check if service deployed already etc. force=True must force the insertion anyway
     if not deployed_services and failed_services:
-        return {"message": failed_services[0]["message"], "failed_services": failed_services}, failed_services[0].get("status", 400)
+        first_failure = failed_services[0]
+        return {
+            "message": first_failure.get("message", "failed to create service"),
+            "failed_services": failed_services,
+        }, first_failure.get("status", 400)
     return {
         "job_id": str(last_service_id),
         "deployed_services": deployed_services,

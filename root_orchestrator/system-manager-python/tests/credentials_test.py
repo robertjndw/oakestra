@@ -304,3 +304,38 @@ def test_check_write_access_requires_org_admin():
         "organization_id": admin_org_id,
     }
     assert _check_write_access(admin_record, "carol", admin_org_id, no_roles) is True
+
+
+def test_credential_in_active_use(monkeypatch):
+    from blueprints import credentials_blueprints as cb
+
+    jobs = [
+        {
+            "status": "RUNNING",
+            "credential_refs": [{"credential_id": "active-cred", "use_as": "image_pull"}],
+        },
+        {
+            "status": "CLUSTER_SCHEDULED",
+            "credential_refs": [{"credential_id": "scheduled-cred", "use_as": "image_pull"}],
+        },
+        {
+            "status": "FAILED",
+            "credential_refs": [{"credential_id": "failed-cred", "use_as": "image_pull"}],
+        },
+        {"status": "RUNNING"},  # no credential_refs at all
+    ]
+    monkeypatch.setattr(cb.job_operations, "get_jobs", lambda **kwargs: jobs)
+
+    assert cb._credential_in_active_use("active-cred") is True
+    assert cb._credential_in_active_use("scheduled-cred") is True
+    # referenced only by a terminal job -> deletable
+    assert cb._credential_in_active_use("failed-cred") is False
+    # not referenced anywhere
+    assert cb._credential_in_active_use("unknown-cred") is False
+
+
+def test_credential_in_active_use_fails_closed_on_lookup_error(monkeypatch):
+    from blueprints import credentials_blueprints as cb
+
+    monkeypatch.setattr(cb.job_operations, "get_jobs", lambda **kwargs: None)
+    assert cb._credential_in_active_use("any") is None

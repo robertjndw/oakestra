@@ -23,7 +23,7 @@ git+https://github.com/oakestra/oakestra.git@${LIB_BRANCH}#subdirectory=librarie
 git+https://github.com/oakestra/oakestra.git@${LIB_BRANCH}#subdirectory=libraries/oakestra_utils_library
 cryptography==44.0.1
 gunicorn==22.0.0
-# Test dependencies (also installed explicitly in CI; declared here for reproducible local test runs)
-mongomock==4.1.2
-pytest~=9.0
-coverage~=7.14
+# Runtime dependencies only - test dependencies (pytest, coverage, mongomock) are
+# not listed here to keep the production image lean. They are installed in CI
+# (.github/workflows/root_system_manager_tests.yml); for local test runs:
+#   pip install pytest coverage mongomock==4.1.2

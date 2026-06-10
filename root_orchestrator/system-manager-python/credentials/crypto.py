@@ -24,7 +24,7 @@ def init_crypto() -> None:
 
     NOTE: All credentials are encrypted with a single static key. Rotating the
     key requires re-encrypting every data_ciphertext document in the credentials
-    collection — there is no automated rotation utility. Back up the key and the
+    collection - there is no automated rotation utility. Back up the key and the
     collection before attempting a manual rotation.
     """
     _init_fernet()

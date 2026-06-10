@@ -71,7 +71,7 @@ try:
     _cred_crypto.init_crypto()
     _cred_registry.register_builtin()
     logger.info(
-        f"Credential subsystem initialized — "
+        f"Credential subsystem initialized - "
         f"{len(_cred_registry.get_registered_types())} type handler(s) registered"
     )
 except RuntimeError as e:

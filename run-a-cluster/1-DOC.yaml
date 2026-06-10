@@ -52,6 +52,7 @@ services:
       - NET_PLUGIN_PORT=10099
       - JWT_GENERATOR_URL=jwt_generator
       - JWT_GENERATOR_PORT=10011
+      - CREDENTIAL_ENCRYPTION_KEY=${CREDENTIAL_ENCRYPTION_KEY}
     logging: *default-logging
 
 

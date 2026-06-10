@@ -1,6 +1,7 @@
 import logging
 
 import requests
+from oakestra_utils.types.statuses import DeploymentStatus
 from resource_abstractor_client import candidate_operations, job_operations
 from services.cluster_management import find_cluster_of_job
 from utils.network import sanitize
@@ -21,7 +22,7 @@ def _embed_credentials(job: dict) -> None:
     """
     Resolve, decrypt, and materialize any credential_refs on the job, embedding
     the plaintext values into job["credentials"] for delivery to the cluster/worker.
-    Raises RuntimeError if any ref fails — the caller should abort the deploy so
+    Raises RuntimeError if any ref fails - the caller should abort the deploy so
     the user gets a clear error instead of a silent pull failure at the worker.
     """
     from credentials.crypto import is_enabled
@@ -32,16 +33,14 @@ def _embed_credentials(job: dict) -> None:
         return
     if not is_enabled():
         raise RuntimeError(
-            "Job has credential_refs but the credential subsystem is disabled — "
+            "Job has credential_refs but the credential subsystem is disabled - "
             "set CREDENTIAL_ENCRYPTION_KEY to enable it"
         )
 
     materialized = []
     for ref in credential_refs:
         try:
-            materialized.append(
-                materialize_credential(ref["credential_id"], ref["use_as"])
-            )
+            materialized.append(materialize_credential(ref["credential_id"], ref["use_as"]))
         except CredentialError as e:
             raise RuntimeError(
                 f"Failed to materialize credential {ref.get('credential_id')}: {e}"
@@ -65,6 +64,9 @@ def cluster_request_to_deploy(cluster_id, job_id, instance_number):
         _embed_credentials(job)
     except RuntimeError as e:
         logger.error(f"Cannot deploy job {job_id} instance {instance_number}: {e}")
+        # Surface the failure on the job so the user sees why nothing was deployed
+        # instead of the job silently staying in its scheduled state.
+        job_operations.update_job_status(job_id, DeploymentStatus.FAILED, status_detail=str(e))
         return
 
     cluster_addr = (
@@ -139,6 +141,11 @@ def cluster_request_to_replicate_up(cluster_obj, job_obj, int_replicas):
         _embed_credentials(job_obj)
     except RuntimeError as e:
         logger.error(f"Cannot replicate job: {e}")
+        job_id = job_obj.get("_id")
+        if job_id:
+            job_operations.update_job_status(
+                str(job_id), DeploymentStatus.FAILED, status_detail=str(e)
+            )
         return
 
     cluster_addr = (

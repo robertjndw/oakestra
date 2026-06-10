@@ -19,6 +19,7 @@ from flask import request
 from flask.views import MethodView
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_smorest import Blueprint, abort
+from oakestra_utils.types.statuses import DeploymentStatus, PositiveSchedulingStatus
 from resource_abstractor_client import job_operations
 from roles.securityUtils import Role, get_jwt_auth_claims, get_jwt_organization
 
@@ -43,7 +44,12 @@ credentialsblp = Blueprint(
 
 def _require_credentials_enabled():
     if not _credentials_enabled():
-        return abort(503, description="Credential subsystem is disabled — set CREDENTIAL_ENCRYPTION_KEY to enable it")
+        return abort(
+            503,
+            description=(
+                "Credential subsystem is disabled - set CREDENTIAL_ENCRYPTION_KEY to enable it"
+            ),
+        )
 
 
 credentialblp.before_request(_require_credentials_enabled)
@@ -60,7 +66,6 @@ _create_schema = {
     },
     "required": ["name", "type", "scope", "data"],
 }
-
 
 
 def _jwt_principal():
@@ -96,6 +101,35 @@ def _check_write_access(record, username, organization_id, claims):
     ):
         roles = mongo_get_roles_of_user_in_organization(username, organization_id)
         return Role.ORGANIZATION_ADMIN in roles
+    return False
+
+
+# Job statuses for which a referenced credential must not be deleted: the job is
+# either scheduled/being deployed (the credential is still needed for the image
+# pull) or already running (it is needed again on restart/replication).
+_ACTIVE_JOB_STATUSES = {status.value for status in PositiveSchedulingStatus} | {
+    DeploymentStatus.CREATING.value,
+    DeploymentStatus.CREATED.value,
+    DeploymentStatus.RUNNING.value,
+}
+
+
+def _credential_in_active_use(credential_id):
+    """Return True if any active job references this credential.
+
+    The resource abstractor's jobs endpoint does not support arbitrary Mongo
+    filters via query params, so fetch all jobs and filter here. Returns None
+    if the job list could not be retrieved (callers should fail closed).
+    """
+    jobs = job_operations.get_jobs()
+    if jobs is None:
+        return None
+    for job in jobs:
+        if job.get("status") not in _ACTIVE_JOB_STATUSES:
+            continue
+        for ref in job.get("credential_refs") or []:
+            if ref.get("credential_id") == credential_id:
+                return True
     return False
 
 
@@ -165,7 +199,10 @@ class CredentialCreateController(MethodView):
             if not _is_admin(claims):
                 roles = mongo_get_roles_of_user_in_organization(username, organization_id)
                 if Role.ORGANIZATION_ADMIN not in roles:
-                    return abort(403, description="organization-scoped credentials require organization admin role")
+                    return abort(
+                        403,
+                        description="organization-scoped credentials require organization admin role",
+                    )
 
         metadata = data.get("metadata") or {}
         payload = data.get("data") or {}
@@ -194,7 +231,9 @@ class CredentialCreateController(MethodView):
             logger.exception("Failed to create credential")
             return abort(500, description="Failed to create credential")
 
-        logger.info(f"Credential created: id={credential_id} type={cred_type} scope={scope} user={username}")
+        logger.info(
+            f"Credential created: id={credential_id} type={cred_type} scope={scope} user={username}"
+        )
         return {"_id": credential_id, "message": "Credential created"}, 201
 
 
@@ -279,7 +318,7 @@ class CredentialController(MethodView):
         """Delete a credential.
 
         Requires write access (ownership, Admin, or Organization_Admin). Returns
-        409 if the credential is still referenced by a RUNNING job.
+        409 if the credential is still referenced by a scheduled or running job.
         """
         username, organization_id, claims = _jwt_principal()
 
@@ -290,11 +329,13 @@ class CredentialController(MethodView):
         if not _check_write_access(record, username, organization_id, claims):
             return abort(403, description="Access denied")
 
-        active_jobs = job_operations.get_jobs(
-            **{"credential_refs.credential_id": credential_id, "status": "RUNNING"}
-        )
-        if active_jobs:
-            return abort(409, description="Credential is referenced by active jobs and cannot be deleted")
+        in_use = _credential_in_active_use(credential_id)
+        if in_use is None:
+            return abort(503, description="Could not verify credential usage, try again later")
+        if in_use:
+            return abort(
+                409, description="Credential is referenced by active jobs and cannot be deleted"
+            )
 
         mongo_delete_credential(credential_id)
         logger.info(f"Credential deleted: id={credential_id} user={username}")

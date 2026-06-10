@@ -175,7 +175,7 @@ Check that critical env vars were correctly injected into each container:
 
 ```bash
 # Root Orchestrator critical vars
-docker exec system_manager env 2>/dev/null | grep -E "ROOT_MONGO|ROOT_SCHEDULER|RESOURCE_ABSTRACTOR|NET_PLUGIN|JWT" || echo "system_manager not running"
+docker exec system_manager env 2>/dev/null | grep -E "ROOT_MONGO|ROOT_SCHEDULER|RESOURCE_ABSTRACTOR|NET_PLUGIN|JWT|CREDENTIAL_ENCRYPTION_KEY" || echo "system_manager not running"
 
 docker exec root_scheduler env 2>/dev/null | grep -E "MANAGER_URL|RESOURCE_ABSTRACTOR|REDIS_ADDR" || echo "root_scheduler not running"
 
@@ -198,6 +198,7 @@ docker exec cluster_service_manager env 2>/dev/null | grep -E "ROOT_SERVICE_MANA
 - `CLUSTER_NAME` and `CLUSTER_LOCATION` must be non-empty in cluster_manager
 - `REDIS_ADDR` must match `redis://:rootRedis@root_redis:6379` (root) or `redis://:clusterRedis@cluster_redis:6479` (cluster)
 - `CLUSTER_LOCATION` format: `latitude,longitude,radius` (e.g., `48.1,11.6,1000`)
+- `CREDENTIAL_ENCRYPTION_KEY` in system_manager is optional but, if missing, the credential subsystem is disabled and all `/api/credential*` endpoints return 503; deployments referencing credentials in their SLA are rejected. The startup scripts generate the key and persist it in `~/.oakestra/.env`; it must stay stable across restarts or previously stored credentials become undecryptable.
 
 ---
 

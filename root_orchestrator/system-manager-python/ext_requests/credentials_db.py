@@ -42,9 +42,7 @@ def mongo_list_credentials(owner_user_id: str, organization_id: str | None) -> l
     org = []
     if organization_id:
         org = list(
-            db.mongo_credentials.find(
-                {"organization_id": organization_id, "scope": "organization"}
-            )
+            db.mongo_credentials.find({"organization_id": organization_id, "scope": "organization"})
         )
     return private + org
 
