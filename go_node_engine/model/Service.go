@@ -23,25 +23,25 @@ type VolumeRequest struct {
 
 // Service is the struct that describes the service
 type Service struct {
-	JobID           string       `json:"_id"`
-	Sname           string       `json:"job_name"`
-	Instance        int          `json:"instance_number"`
-	Image           string       `json:"image"`
-	Commands        []string     `json:"cmd"`
-	Env             []string     `json:"environment"`
-	Ports           string       `json:"port"`
-	Status          string       `json:"status"`
-	Runtime         string       `json:"virtualization"`
-	Platform        string       `json:"platform"`
-	StatusDetail    string       `json:"status_detail"`
-	Vtpus           int          `json:"vtpus"`
-	Vgpus           int          `json:"vgpus"`
-	Vcpus           int          `json:"vcpus"`
-	Memory          int          `json:"memory"`
-	UnikernelImages []string     `json:"vm_images"`
-	Architectures   []string     `json:"arch"`
+	JobID           string          `json:"_id"`
+	Sname           string          `json:"job_name"`
+	Instance        int             `json:"instance_number"`
+	Image           string          `json:"image"`
+	Commands        []string        `json:"cmd"`
+	Env             []string        `json:"environment"`
+	Ports           string          `json:"port"`
+	Status          string          `json:"status"`
+	Runtime         string          `json:"virtualization"`
+	Platform        string          `json:"platform"`
+	StatusDetail    string          `json:"status_detail"`
+	Vtpus           int             `json:"vtpus"`
+	Vgpus           int             `json:"vgpus"`
+	Vcpus           int             `json:"vcpus"`
+	Memory          int             `json:"memory"`
+	UnikernelImages []string        `json:"vm_images"`
+	Architectures   []string        `json:"arch"`
 	Volumes         []VolumeRequest `json:"volumes"`
-	Storage         int          `json:"storage"`
+	Storage         int             `json:"storage"`
 	Pid             int
 	OneShot         bool         `json:"one_shot"`
 	Privileged      bool         `json:"privileged"`

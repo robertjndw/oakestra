@@ -63,8 +63,8 @@ type Node struct {
 	Technology      []config.RuntimeType `json:"virtualization"`
 	SupportedAddons []AddonType          `json:"supported_addons"`
 	// CSIDrivers lists the CSI plugins that have been successfully probed on this node.
-	CSIDrivers []config.CSIDriverType `json:"csi_drivers"`
-	Overlay    bool
+	CSIDrivers     []config.CSIDriverType `json:"csi_drivers"`
+	Overlay        bool
 	OverlaySocket  string
 	LogDirectory   string
 	NetManagerPort int
