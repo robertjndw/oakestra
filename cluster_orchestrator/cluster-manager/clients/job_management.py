@@ -14,6 +14,19 @@ from resource_abstractor_client import candidate_operations, job_operations
 logger = logging.getLogger("cluster_manager")
 
 
+def _redact_job_for_log(job):
+    """Return a shallow copy of a job safe to log.
+
+    Jobs dispatched by root carry materialized plaintext credentials under the
+    ``credentials`` key. Never emit those to the logs (they are shipped to Loki).
+    """
+    if not isinstance(job, dict) or "credentials" not in job:
+        return job
+    redacted = dict(job)
+    redacted["credentials"] = "[REDACTED]"
+    return redacted
+
+
 def mark_inactive_as_failed(time_interval):
     cutoff = (datetime.now() - timedelta(seconds=time_interval)).timestamp()
     query = {
@@ -88,7 +101,7 @@ def create_new_job_instance(job: dict, instance_number: int):
         updated_job = job_operations.create_job(job)
     else:
         updated_job = job_operations.append_job_instance(job_id, instance_number, job)
-    logger.debug(f"Created new job instance: {updated_job}")
+    logger.debug(f"Created new job instance: {_redact_job_for_log(updated_job)}")
     return updated_job
 
 
