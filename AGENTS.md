@@ -38,6 +38,8 @@ oakestra/
 │   └── InstallOakestraWorker.sh# Worker binary installer
 ├── run-a-cluster/              # Compose-based multi-machine deployment (root-orchestrator.yml + 1-DOC.yaml)
 ├── hack/                       # Platform-specific workarounds (e.g. rpi4b-mongo override)
+├── testdata/
+│   └── mqtt_contract/          # Golden MQTT payloads shared by the cluster_manager and NodeEngine test suites
 └── SKILLS/
     └── troubleshoot-oakestra.md # AI troubleshooting skill (keep this in sync)
 ```
@@ -175,7 +177,10 @@ pip install -r root_orchestrator/system-manager-python/requirements.txt
 # Run tests
 pytest root_orchestrator/system-manager-python/tests/
 pytest resource-abstractor/tests/
-# Note: cluster_manager has no unit tests currently
+
+# cluster_manager: MQTT characterization tests (see cluster_orchestrator/cluster-manager/tests/README.md)
+cd cluster_orchestrator/cluster-manager && pip install -r requirements-test.txt && pytest
+# Broker-backed integration tests run only when OAKESTRA_TEST_MQTT_ADDR=host:port points at a live MQTT broker
 
 # Lint (ruff is configured in pyproject.toml at repo root; line-length=100)
 ruff check .
@@ -190,8 +195,10 @@ cd scheduler && go build ./...
 # Build NodeEngine
 cd go_node_engine && go build -o NodeEngine .
 
-# Run Go tests
+# Run Go tests (the full go_node_engine tree only builds on Linux; the mqtt package also builds on macOS)
 go test ./...
+cd go_node_engine && go test -race ./mqtt/
+# Broker-backed MQTT integration tests run only when OAKESTRA_TEST_MQTT_ADDR=host:port is set
 ```
 
 ### Local stack (full root + cluster on one machine)
