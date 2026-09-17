@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "oakestra_messaging"
+version = "0.1.0"
+description = "Technology-neutral pub/sub interface for Oakestra's cluster-to-worker messaging"
+authors = ["Oakestra <oakestra@oakestra.io>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+paho-mqtt = ">=1.6.1,<3.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

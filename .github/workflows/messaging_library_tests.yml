@@ -1,0 +1,77 @@
+name: Messaging Library Tests
+
+on: push
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      matrix:
+        paho: ["1.6.1", "2.1.0"]
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: "3.10"
+
+      - name: Start Mosquitto broker
+        run: |
+          docker run -d --name mqtt -p 11883:10003 \
+            -v $GITHUB_WORKSPACE/cluster_orchestrator/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
+            eclipse-mosquitto:2.0
+
+      - name: Install library and test dependencies
+        run: |
+          pip install ./libraries/oakestra_messaging pytest
+          pip install "paho-mqtt==${{ matrix.paho }}"
+
+      - name: Run test suite
+        working-directory: libraries/oakestra_messaging
+        env:
+          OAKESTRA_TEST_MQTT_ADDR: 127.0.0.1:11883
+        run: |
+          pytest -v
+
+  go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v2
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: libraries/oakestra_messaging_go/go.mod
+
+      - name: Start Mosquitto broker
+        run: |
+          docker run -d --name mqtt -p 11883:10003 \
+            -v $GITHUB_WORKSPACE/cluster_orchestrator/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
+            eclipse-mosquitto:2.0
+
+      - name: Check formatting
+        working-directory: libraries/oakestra_messaging_go
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: Vet
+        working-directory: libraries/oakestra_messaging_go
+        run: go vet ./...
+
+      - name: Run test suite
+        working-directory: libraries/oakestra_messaging_go
+        env:
+          OAKESTRA_TEST_MQTT_ADDR: 127.0.0.1:11883
+        run: go test -race ./...

@@ -21,13 +21,16 @@ oakestra/
 ├── cluster_orchestrator/       # Cluster-level services (docker-compose)
 │   ├── docker-compose.yml
 │   ├── override-*.yml
-│   └── cluster-manager/       # Python/Flask – cluster API + MQTT client
+│   └── cluster-manager/       # Python/Flask – cluster API, messaging via oakestra_messaging
 ├── scheduler/                  # Go – shared scheduler (used by both root & cluster)
 ├── resource-abstractor/        # Python/Flask – resource DB layer (used by both levels)
 ├── go_node_engine/             # Go – worker binary (NodeEngine)
-├── libraries/                  # Shared Python packages
+│   └── clusterlink/            # Control topics + status/resource/node reporting, via oakestra_messaging_go
+├── libraries/                  # Shared Python packages and one shared Go module
 │   ├── oakestra_utils_library/ # Enums: statuses, scheduling states
-│   └── resource_abstractor_client/ # HTTP client for resource-abstractor
+│   ├── resource_abstractor_client/ # HTTP client for resource-abstractor
+│   ├── oakestra_messaging/     # Python pub/sub interface hiding the transport (MQTT today)
+│   └── oakestra_messaging_go/  # Go pub/sub interface hiding the transport (MQTT today)
 ├── addons_engine/              # Optional addons subsystem (root only)
 ├── addons_marketplace/         # Optional marketplace manager
 ├── csi/                        # Container Storage Interface driver
@@ -38,6 +41,8 @@ oakestra/
 │   └── InstallOakestraWorker.sh# Worker binary installer
 ├── run-a-cluster/              # Compose-based multi-machine deployment (root-orchestrator.yml + 1-DOC.yaml)
 ├── hack/                       # Platform-specific workarounds (e.g. rpi4b-mongo override)
+├── testdata/
+│   └── mqtt_contract/          # Golden MQTT payloads shared by the cluster_manager and NodeEngine test suites
 └── SKILLS/
     └── troubleshoot-oakestra.md # AI troubleshooting skill (keep this in sync)
 ```
@@ -79,7 +84,7 @@ Root Orchestrator  (1 per deployment)
 
 | Container | Language | Ports | Role |
 |---|---|---|---|
-| `cluster_manager` | Python/Flask + eventlet | 10100 (REST), 10101 | Registers with root via gRPC. Receives jobs from root, dispatches via MQTT to workers. Runs background job every 15s to push aggregated resource info to system_manager. |
+| `cluster_manager` | Python/Flask + eventlet | 10100 (REST), 10101 | Registers with root via gRPC. Receives jobs from root, dispatches to workers through the `oakestra_messaging` bus (MQTT on the wire today, hidden behind the interface). Runs background job every 15s to push aggregated resource info to system_manager. |
 | `cluster_mongo` | MongoDB 8.0 | 10107 | Cluster-level job and node state. |
 | `cluster_mongo_net` | MongoDB 8.0 | 10108 | Cluster-level network state. |
 | `cluster_service_manager` | Go (oakestra-net repo) | 10110 | Cluster-level network plugin. Talks to root_service_manager and workers via MQTT. |
@@ -99,7 +104,7 @@ Root Orchestrator  (1 per deployment)
 
 | Binary | Repo | Role |
 |---|---|---|
-| `NodeEngine` | This repo (`go_node_engine/`) | Runs on Linux workers. Connects to cluster via MQTT (10003). Receives deployment commands, manages containers/unikernels/VMs. Exposes CLI: `NodeEngine status`, `NodeEngine conf`, `NodeEngine logs`, `NodeEngine stop`. |
+| `NodeEngine` | This repo (`go_node_engine/`) | Runs on Linux workers. Connects to the cluster through `go_node_engine/clusterlink`, which talks to the `oakestra_messaging_go` bus (MQTT on the wire today, port 10003). Receives deployment commands, manages containers/unikernels/VMs. Exposes CLI: `NodeEngine status`, `NodeEngine conf`, `NodeEngine logs`, `NodeEngine stop`. |
 | `NetManager` | `github.com/oakestra/oakestra-net` | Handles P2P overlay networking between workers (port 50103). Paired with NodeEngine. |
 
 ---
@@ -153,10 +158,10 @@ export OVERRIDE_FILES="override-no-addons.yml,override-network-host.yml"
 | Layer | Language/Framework | Key deps |
 |---|---|---|
 | system_manager | Python 3.10, Flask, flask-smorest, flask-socketio, eventlet | grpc, pymongo, flask-jwt-extended |
-| cluster_manager | Python 3.10, Flask, flask-smorest, flask-socketio, eventlet | grpc, paho-mqtt, apscheduler, prometheus_client |
+| cluster_manager | Python 3.10, Flask, flask-smorest, flask-socketio, eventlet | grpc, oakestra_messaging (internal lib; paho-mqtt lives inside it), apscheduler, prometheus_client |
 | resource-abstractor | Python 3.10, Flask | pymongo, resource_abstractor_client (internal lib) |
 | root/cluster scheduler | Go 1.24 | gin, asynq (Redis-backed task queue) |
-| NodeEngine | Go | paho-mqtt, cobra CLI |
+| NodeEngine | Go | oakestra_messaging_go (internal module; paho-mqtt lives inside it), cobra CLI |
 | Databases | MongoDB 8.0, Redis | — |
 | Messaging | NATS 2.14 in MQTT compatibility mode | — |
 | Networking | oakestra-net (external Go repo) | — |
@@ -175,11 +180,22 @@ pip install -r root_orchestrator/system-manager-python/requirements.txt
 # Run tests
 pytest root_orchestrator/system-manager-python/tests/
 pytest resource-abstractor/tests/
-# Note: cluster_manager has no unit tests currently
+
+# cluster_manager: MQTT characterization tests (see cluster_orchestrator/cluster-manager/tests/README.md)
+cd cluster_orchestrator/cluster-manager && pip install -r requirements-test.txt ../../libraries/oakestra_utils_library ../../libraries/resource_abstractor_client ../../libraries/oakestra_messaging && pytest
+# Broker-backed integration tests run only when OAKESTRA_TEST_MQTT_ADDR=host:port points at a live MQTT broker
+
+# oakestra_messaging: shared pub/sub library tests (unit tests only need no broker)
+cd libraries/oakestra_messaging && pip install -e . pytest && pytest
+# CI also runs this against both paho-mqtt 1.6.1 and 2.1.0
 
 # Lint (ruff is configured in pyproject.toml at repo root; line-length=100)
 ruff check .
 ```
+
+`MESSAGING_BACKEND` selects the transport for cluster_manager and NodeEngine. It defaults to
+`mqtt` (the only valid value today); any other value makes both processes exit at startup instead
+of running with a broken transport.
 
 ### Go services (scheduler, NodeEngine)
 
@@ -190,8 +206,13 @@ cd scheduler && go build ./...
 # Build NodeEngine
 cd go_node_engine && go build -o NodeEngine .
 
-# Run Go tests
+# Run Go tests (the full go_node_engine tree only builds on Linux; the clusterlink package also builds on macOS)
 go test ./...
+cd go_node_engine && go test -race ./clusterlink/
+# Broker-backed MQTT integration tests run only when OAKESTRA_TEST_MQTT_ADDR=host:port is set
+
+# oakestra_messaging_go: shared pub/sub module tests
+cd libraries/oakestra_messaging_go && go vet ./... && go test -race ./...
 ```
 
 ### Local stack (full root + cluster on one machine)
@@ -220,17 +241,29 @@ export OAKESTRA_VERSION=develop
 
 ## Shared Libraries
 
-- `libraries/oakestra_utils_library` — Python enums for job statuses (`DeploymentStatus`, `PositiveSchedulingStatus`, `NegativeSchedulingStatus`). Imported by system_manager and cluster_manager. Branch used during build is controlled by the `LIB_BRANCH` build arg (defaults to `develop`).
+- `libraries/oakestra_utils_library` — Python enums for job statuses (`DeploymentStatus`, `PositiveSchedulingStatus`, `NegativeSchedulingStatus`). Imported by system_manager and cluster_manager.
 - `libraries/resource_abstractor_client` — Python HTTP client for resource-abstractor. Reads `RESOURCE_ABSTRACTOR_URL` and `RESOURCE_ABSTRACTOR_PORT` from env.
+- `libraries/oakestra_messaging` — Python pub/sub interface (`MessageBus`, `MqttBus`, `InMemoryBus`, `Dispatcher`, `from_env`) that hides the transport behind `MessageBus`. Imported by cluster_manager as `clients/workerlink.py`; `oakestra-net`'s cluster_service_manager consumes the same package over git (see `libraries/README.md`).
+
+**The two `oakestra_utils_library`/`resource_abstractor_client` libraries and `oakestra_messaging` are always built from this repo's local `libraries/` folder — never fetched from a remote git repo for in-repo consumers.** Consumers wire them in as follows:
+- **Docker builds** — the service's `docker-compose.yml` exposes `libraries/` as a named build context (`additional_contexts: libraries=../libraries`); the Dockerfile does `COPY --from=libraries . /libraries` and `pip install`s them. CI (`docker/build-push-action`) passes the same via `build-contexts: libraries=./libraries`.
+- **Local dev / tests** — `pip install ./libraries/oakestra_utils_library ./libraries/resource_abstractor_client ./libraries/oakestra_messaging` (the VS Code `install-*-dependencies` tasks already do this). The `requirements.txt` files no longer list the libraries.
+
+- `libraries/oakestra_messaging_go` — Go pub/sub interface (module `github.com/oakestra/oakestra/libraries/oakestra_messaging_go`, root package `messaging`, subpackages `mqtt` and `memory`) with the same purpose as the Python library, for Go endpoints (NodeEngine today, `oakestra-net`'s NetManager as well). Two consumption modes:
+  - **NodeEngine (`go_node_engine/`, in this repo)** requires the module and adds a local `replace ... => ../libraries/oakestra_messaging_go` in `go.mod`, so it always builds against the working tree's copy with no publish step.
+  - **`oakestra-net` (separate repo)** has no local checkout to replace against, so it pins a pseudo-version (`go get github.com/oakestra/oakestra/libraries/oakestra_messaging_go@<branch-or-commit>`) before a tag exists, or a tag afterwards. Tag format is `libraries/oakestra_messaging_go/vX.Y.Z` (a subdirectory module tag, not a bare `vX.Y.Z`, which would collide with tags on the root `oakestra` module).
 
 ---
 
 ## Gotchas
 
 - **Host networking breaks container DNS.** When using `override-network-host.yml`, containers can't resolve each other by name — set all env vars to IPs, not container names.
-- **`LIB_BRANCH` on feature branches.** The `oakestra_utils_library` and `resource_abstractor_client` Docker build arg `LIB_BRANCH` defaults to `develop`. If your branch adds library changes, set `LIB_BRANCH` to your branch name or images will build against stale library code.
+- **Shared libraries are always local.** `oakestra_utils_library` and `resource_abstractor_client` are built from this repo's `libraries/` folder (see the Shared Libraries section) — there is no `LIB_BRANCH` build arg any more, and nothing is fetched from a remote git repo. Edit the code in `libraries/` and rebuild; changes take effect immediately, no push required. Docker builds need BuildKit/Buildx (named build contexts) — already the default in the compose files, CI, and VS Code tasks.
 - **eventlet monkey-patching.** Both `system_manager` and `cluster_manager` use eventlet. Monkey-patching must happen before Flask/pymongo imports — don't reorder the top of entry-point files.
 - **Scheduler is the same binary for root and cluster** — differentiated only by env vars (`SCHEDULER_TYPE`, Redis URL/password). Keep deployment-specific logic out of the binary.
+- **`MESSAGING_BACKEND` fails fast on an unknown value.** cluster_manager exits and NodeEngine's `nodeengined` exits fatally at startup rather than falling back to a default, so a typo surfaces immediately instead of running with no transport.
+- **Never run `go get -u` against `oakestra_messaging_go` from `oakestra-net`.** With no tag yet published there, `-u` resolves "latest" to whatever commit currently sits at the tip of the tracked branch, which can silently pull in unrelated changes and bump every other dependency. Pin with `go get ...@<branch-or-commit-or-tag>` or use `go mod download`.
+- **Message handlers must not rely on exceptions/panics propagating.** The `Dispatcher` in both messaging libraries catches a handler that raises (Python) or panics (Go), logs it, and keeps delivering to other handlers and later messages — a malformed payload no longer kills the network thread, but it also means a handler bug won't crash the process the way it used to.
 
 ---
 

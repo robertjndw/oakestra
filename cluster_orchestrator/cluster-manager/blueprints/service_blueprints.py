@@ -4,7 +4,7 @@ import traceback
 from bson import json_util
 from clients import job_management
 from clients.job_management import deploy_job
-from clients.mqtt_client import mqtt_publish_edge_deploy
+from clients.workerlink import publish_deploy, undeploy_instance
 from ext_requests.network_manager_requests import network_notify_deployment
 from flask import Response, request
 from flask.views import MethodView
@@ -68,7 +68,7 @@ class ServiceController(MethodView):
         logger.info("Incoming Request /api/delete/ - to delete task...")
 
         try:
-            job_management.delete_job_instance(job_id, int(instance_number), erase=True)
+            undeploy_instance(job_id, int(instance_number), erase=True)
         except Exception as e:
             logger.error(f"Failed to delete service {job_id}: {e}")
             logger.error(f"{traceback.format_exc()}")
@@ -122,5 +122,5 @@ class SchedulingController(MethodView):
         network_notify_deployment(job_id, job)
 
         # publish job
-        mqtt_publish_edge_deploy(node_id, job, instance_number)
+        publish_deploy(node_id, job, instance_number)
         return Response(json_util.dumps({"status": "ok"}), mimetype="application/json")

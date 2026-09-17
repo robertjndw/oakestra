@@ -9,7 +9,7 @@ import config
 import grpc
 from apscheduler.schedulers.background import BackgroundScheduler
 from blueprints import blueprints
-from clients.mqtt_client import mqtt_init
+from clients import workerlink
 from clients.my_prometheus_client import prometheus_init_gauge_metrics
 from cm_logging import configure_logging
 from ext_requests.system_manager_requests import (
@@ -40,9 +40,9 @@ socketioserver = SocketIO(app, logger=True, engineio_logger=True)
 api = Api(app, spec_kwargs={"x-internal-id": "1", "host": "oakestra.io"})
 cors = CORS(app, resources={r"/*": {"origins": "*"}})
 
-mqtt_init(app)
-
-BACKGROUND_JOB_INTERVAL = 15
+bus = workerlink.bus_from_env()
+workerlink.start(bus)
+bus.connect()
 
 # Register apis
 for bp in blueprints:
@@ -66,14 +66,15 @@ def background_job_send_aggregated_information_to_sm():
     scheduler.add_job(
         send_aggregated_info_to_sm,
         "interval",
-        seconds=BACKGROUND_JOB_INTERVAL,
+        seconds=config.AGGREGATION_INTERVAL,
         kwargs={
             "my_id": config.MY_ASSIGNED_CLUSTER_ID,
-            "time_interval": 2 * BACKGROUND_JOB_INTERVAL,
+            "running_timeout": 2 * config.AGGREGATION_INTERVAL,
+            "node_scheduled_timeout": config.NODE_SCHEDULED_TIMEOUT,
         },
     )
     # job_re_deploy_dead_jobs
-    scheduler.add_job(re_deploy_dead_jobs_routine, "interval", seconds=BACKGROUND_JOB_INTERVAL)
+    scheduler.add_job(re_deploy_dead_jobs_routine, "interval", seconds=config.AGGREGATION_INTERVAL)
 
     scheduler.start()
 
@@ -143,7 +144,7 @@ def _register_in_background():
     # registration. That probe can only succeed once gunicorn's worker has
     # entered its accept loop, which doesn't happen until load_wsgi (i.e. this
     # module's top-level import) returns. So we MUST NOT block the import on
-    # the gRPC call — otherwise the root's probe deadlocks against our own
+    # the gRPC call, otherwise the root's probe deadlocks against our own
     # startup. Give gunicorn a moment to start serving, then register. On
     # failure, exit the worker so gunicorn respawns it and tries again.
     time.sleep(2)

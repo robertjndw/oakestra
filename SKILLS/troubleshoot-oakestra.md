@@ -169,6 +169,8 @@ docker logs <exited_container_name> 2>&1 | tail -50
 | `CLUSTER_ADDRESS env var is not set` (cluster_manager log) | Missing env var — cluster cannot advertise its address to root |
 | `cluster_address is required` (system_manager log) | Cluster connected via gRPC but sent empty `cluster_address` |
 | `Cluster reachability probe failed` / `cluster not reachable at` (system_manager log) | Root cannot reach `http://CLUSTER_ADDRESS:10100/api/cluster/status` — wrong IP, firewall, or cluster_manager not up |
+| `unsupported MESSAGING_BACKEND` (cluster_manager or NodeEngine log, then exit) | `MESSAGING_BACKEND` is set to something other than `mqtt`. The process refuses to start rather than run without a transport — unset the var or fix the typo. |
+| `connect timed out waiting for subscriptions` (cluster_manager or NodeEngine log, then exit) | Broker is reachable but never acked the initial subscriptions within 10s — usually an ACL misconfiguration on the MQTT broker. The service now fails startup instead of running deaf (connected but never receiving messages). Check `mosquitto` ACL/auth config and the client's credentials. |
 
 ---
 
@@ -202,6 +204,10 @@ docker exec cluster_service_manager env 2>/dev/null | grep -E "ROOT_SERVICE_MANA
 - `CLUSTER_ADDRESS` must be non-empty in cluster_manager and must be the **IP/hostname at which the ROOT can reach this cluster manager** (typically the cluster host's default-route IP). It must NOT be `localhost`, `127.0.0.1`, `0.0.0.0`, or a Docker-internal address like `172.17.x.x` / `172.19.x.x` (those are the docker bridge gateway and not routable from the root). In 1-DOC deployments, `CLUSTER_ADDRESS` should equal `SYSTEM_MANAGER_URL`.
 - `REDIS_ADDR` must match `redis://:rootRedis@root_redis:6379` (root) or `redis://:clusterRedis@cluster_redis:6479` (cluster)
 - `CLUSTER_LOCATION` format: `latitude,longitude,radius` (e.g., `48.1,11.6,1000`)
+- `MESSAGING_BACKEND` (cluster_manager and NodeEngine) — optional, defaults to `mqtt`, currently the
+  only valid value. Any other value makes the process exit at startup with `unsupported
+  MESSAGING_BACKEND ...` instead of running without a transport. Unless you are deliberately
+  testing the fail-fast path, leave it unset.
 
 ---
 
@@ -240,7 +246,9 @@ docker exec mongo mongosh --port 10007 --eval "
 
 **What to look for:**
 - Clusters/nodes with zero available CPU/memory despite real resources → resource abstractor not syncing
-- Jobs stuck in `CLUSTER_SCHEDULED` or `NODE_SCHEDULED` for a long time → worker not acknowledging deployment
+- Jobs stuck in `CLUSTER_SCHEDULED` or `NODE_SCHEDULED` for more than 15 s → worker not acknowledging deployment (node dead or MQTT lost). The cluster will mark them FAILED and reschedule automatically.
+- Jobs stuck in `INSTANTIATION` for more than 30 s without heartbeats → worker died during image pull / container creation. Will be marked FAILED and rescheduled automatically.
+- Jobs stuck in `INSTANTIATION` indefinitely with fresh heartbeats → normal for large images; wait for the image pull to finish.
 - Jobs stuck in `CREATING` → NodeEngine issue on worker
 - No clusters registered despite cluster being started → cluster_manager cannot reach system_manager
 
@@ -328,6 +336,13 @@ cannot communicate with worker NodeEngines. This blocks all deployment.
 
 NATS runs in anonymous mode by default (no credentials needed). MQTT TLS auth is
 not yet configured; if you see auth errors, verify no auth override is being applied.
+`cluster_manager`, `cluster_service_manager`, `NodeEngine`, and `NetManager` all reach MQTT through
+the shared oakestra messaging interface (`oakestra_messaging` / `oakestra_messaging_go`) rather
+than talking to paho directly; on the wire it is still plain MQTT, so the diagnostics above are
+unaffected, but note that an unreadable TLS cert path now fails startup outright instead of
+silently falling back to a plaintext connection.
+
+Check if `override-mosquitto-auth.yml` is being used — if so, authentication credentials must be provided; without them, workers cannot connect.
 
 ---
 
@@ -644,9 +659,12 @@ docker compose build --no-cache system_manager
 docker compose pull
 ```
 
-Check `LIB_BRANCH` env var — it controls which branch of the `libraries` package is used during build:
+The shared `libraries/` packages (`oakestra_utils_library`, `resource_abstractor_client`) are built from the repo-local `libraries/` folder via a Buildx named build context — not from a remote git repo, and there is no `LIB_BRANCH` env var. If a build fails on these libraries, check that:
 ```bash
-echo $LIB_BRANCH  # Should match the Oakestra version being deployed
+# The libraries build context resolves (declared in docker-compose.yml as additional_contexts):
+ls libraries/oakestra_utils_library libraries/resource_abstractor_client
+# BuildKit/Buildx is enabled (named build contexts require it — default on modern Docker):
+docker buildx version
 ```
 
 ---
@@ -745,6 +763,21 @@ docker exec cluster_manager curl -sf http://mqtt:8222/healthz || echo "NATS not 
 # Check NATS logs for MQTT listener startup
 docker logs mqtt 2>&1 | grep -i "10003"
 ```
+
+### Fix: cluster_manager or NodeEngine exits with `unsupported MESSAGING_BACKEND`
+```bash
+# Check the current value
+docker exec cluster_manager env | grep ^MESSAGING_BACKEND=
+```
+Unset the var, or set it to `mqtt` (the only supported value today), then restart the container /
+NodeEngine service.
+
+### Fix: cluster_manager or NodeEngine exits with `connect timed out waiting for subscriptions`
+The broker accepted the TCP/TLS connection but never acked the initial subscriptions within 10s.
+1. Confirm the broker is actually healthy (STEP 6).
+2. Check `mosquitto` ACL and auth configuration — a client that connects but is denied a SUBSCRIBE
+   by ACL will hang exactly like this.
+3. If `override-mosquitto-auth.yml` is in use, verify the connecting client's credentials.
 
 ### Fix: Docker socket permission denied
 ```bash

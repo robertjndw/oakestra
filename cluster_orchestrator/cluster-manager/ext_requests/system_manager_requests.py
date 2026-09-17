@@ -4,7 +4,7 @@ import threading
 import traceback
 
 import requests
-from clients import job_management, resource_aggregation
+from clients import job_management, resource_aggregation, workerlink
 from clients.my_prometheus_client import prometheus_set_metrics
 from oakestra_utils.types.statuses import (
     DeploymentStatus,
@@ -22,10 +22,12 @@ SYSTEM_MANAGER_ADDR = (
 )
 
 
-def send_aggregated_info_to_sm(my_id, time_interval):
+def send_aggregated_info_to_sm(my_id, running_timeout, node_scheduled_timeout):
     try:
-        data = resource_aggregation.aggregate_info(time_interval)
-        data.update({"jobs": job_management.aggregate_info(time_interval)})
+        data = resource_aggregation.aggregate_info()
+        data.update(
+            {"jobs": job_management.aggregate_info(running_timeout, node_scheduled_timeout)}
+        )
         logger.debug("sending aggregated info to system manager: %s", data)
         threading.Thread(group=None, target=send_aggregated_info, args=(my_id, data)).start()
         prometheus_set_metrics(data)
@@ -66,7 +68,7 @@ def send_aggregated_info(my_id, data):
 
 def trigger_undeploy_and_re_deploy(service, instance):
     try:
-        job_management.delete_job_instance(
+        workerlink.undeploy_instance(
             service.get("_id"), instance.get("instance_number"), erase=False
         )
         job_management.update_status(
