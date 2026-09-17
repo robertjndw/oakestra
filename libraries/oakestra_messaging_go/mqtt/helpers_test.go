@@ -42,14 +42,14 @@ func writeTestCertPair(t *testing.T) (certPath, keyPath string) {
 
 	certOut, err := os.Create(certPath)
 	assert.NilError(t, err)
-	defer certOut.Close()
+	defer func() { assert.NilError(t, certOut.Close()) }()
 	assert.NilError(t, pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}))
 
 	keyBytes, err := x509.MarshalECPrivateKey(priv)
 	assert.NilError(t, err)
 	keyOut, err := os.Create(keyPath)
 	assert.NilError(t, err)
-	defer keyOut.Close()
+	defer func() { assert.NilError(t, keyOut.Close()) }()
 	assert.NilError(t, pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}))
 
 	return certPath, keyPath
