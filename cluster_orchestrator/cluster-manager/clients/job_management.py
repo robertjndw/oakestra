@@ -222,9 +222,7 @@ def get_jobs_with_failed_instances():
     return job_operations.get_jobs(**query)
 
 
-def delete_job_instance(job_id: int, instance_number: int, erase: bool = True):
-    from clients.mqtt_client import mqtt_publish_edge_delete
-
+def delete_job_instance(job_id: int, instance_number: int, erase: bool = True, *, notify_worker):
     # send instance undeployment to node
     job = job_operations.get_job_by_id(job_id)
     instance_list = job.get("instance_list")
@@ -237,7 +235,7 @@ def delete_job_instance(job_id: int, instance_number: int, erase: bool = True):
             worker_id = instance.get("worker_id", None)
 
             if worker_id is not None:
-                mqtt_publish_edge_delete(
+                notify_worker(
                     worker_id,
                     job.get("job_name"),
                     instance["instance_number"],

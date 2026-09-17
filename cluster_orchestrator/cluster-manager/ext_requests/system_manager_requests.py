@@ -4,7 +4,7 @@ import threading
 import traceback
 
 import requests
-from clients import job_management, resource_aggregation
+from clients import job_management, resource_aggregation, workerlink
 from clients.my_prometheus_client import prometheus_set_metrics
 from oakestra_utils.types.statuses import (
     DeploymentStatus,
@@ -68,7 +68,7 @@ def send_aggregated_info(my_id, data):
 
 def trigger_undeploy_and_re_deploy(service, instance):
     try:
-        job_management.delete_job_instance(
+        workerlink.undeploy_instance(
             service.get("_id"), instance.get("instance_number"), erase=False
         )
         job_management.update_status(
