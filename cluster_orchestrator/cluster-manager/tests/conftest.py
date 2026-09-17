@@ -17,37 +17,21 @@ os.environ.setdefault("SYSTEM_MANAGER_PORT", "10000")
 os.environ.setdefault("SYSTEM_MANAGER_GRPC_PORT", "50052")
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
-import clients.mqtt_client
+import clients.workerlink as workerlink
 import pytest
-from paho.mqtt.client import MQTTMessage
+from oakestra_messaging import InMemoryBus
 
 CONTRACT_DIR = Path(__file__).resolve().parents[3] / "testdata" / "mqtt_contract"
 
 
 @pytest.fixture
-def mqtt_mock(monkeypatch):
-    """Replace the module-level paho client with a MagicMock so publish/subscribe
-    calls can be asserted without a broker."""
-    mock = MagicMock()
-    monkeypatch.setattr(clients.mqtt_client, "mqtt", mock)
-    return mock
-
-
-@pytest.fixture
-def make_message():
-    """Build a real MQTTMessage, matching what paho hands to on_message."""
-
-    def _make(topic, payload):
-        message = MQTTMessage(topic=topic.encode())
-        if isinstance(payload, (bytes, bytearray)):
-            message.payload = bytes(payload)
-        else:
-            message.payload = payload.encode()
-        return message
-
-    return _make
+def bus():
+    """An in-memory bus wired up exactly like production, without a broker."""
+    test_bus = InMemoryBus()
+    workerlink.start(test_bus)
+    yield test_bus
+    workerlink._bus = None
 
 
 @pytest.fixture

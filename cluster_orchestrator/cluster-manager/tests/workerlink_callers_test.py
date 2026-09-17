@@ -1,8 +1,11 @@
+import json
 from unittest.mock import patch
 
 import blueprints.service_blueprints as service_blueprints
 import clients.job_management as job_management
+import clients.workerlink as workerlink
 from flask import Flask
+from oakestra_messaging import Message
 
 
 def _job(instance_list, **extra):
@@ -10,7 +13,7 @@ def _job(instance_list, **extra):
 
 
 class TestDeleteJobInstance:
-    def test_publishes_for_instance_with_worker_id(self):
+    def test_publishes_for_instance_with_worker_id(self, bus):
         job = _job(
             [
                 {"instance_number": 1, "worker_id": "nodeA"},
@@ -22,40 +25,59 @@ class TestDeleteJobInstance:
             patch.object(job_management.job_operations, "get_job_by_id", return_value=job),
             patch.object(job_management.job_operations, "delete_job_instance") as del_inst,
             patch.object(job_management.job_operations, "delete_job") as del_job,
-            patch("clients.mqtt_client.mqtt_publish_edge_delete") as publish,
         ):
-            job_management.delete_job_instance("job1", 1)
+            workerlink.undeploy_instance("job1", 1)
 
-        publish.assert_called_once_with("nodeA", "app.ns.svc.inst", 1, "containerd")
+        assert bus.published == [
+            Message(
+                "nodes/nodeA/control/delete",
+                json.dumps(
+                    {
+                        "job_name": "app.ns.svc.inst",
+                        "virtualization": "containerd",
+                        "instance_number": 1,
+                    }
+                ).encode(),
+            )
+        ]
         del_inst.assert_called_once_with("job1", 1)
         del_job.assert_not_called()
 
-    def test_uses_job_virtualization_default_docker(self):
+    def test_uses_job_virtualization_default_docker(self, bus):
         job = _job([{"instance_number": 1, "worker_id": "nodeA"}])
         with (
             patch.object(job_management.job_operations, "get_job_by_id", return_value=job),
             patch.object(job_management.job_operations, "delete_job_instance"),
             patch.object(job_management.job_operations, "delete_job"),
-            patch("clients.mqtt_client.mqtt_publish_edge_delete") as publish,
         ):
-            job_management.delete_job_instance("job1", 1)
+            workerlink.undeploy_instance("job1", 1)
 
-        publish.assert_called_once_with("nodeA", "app.ns.svc.inst", 1, "docker")
+        assert bus.published == [
+            Message(
+                "nodes/nodeA/control/delete",
+                json.dumps(
+                    {
+                        "job_name": "app.ns.svc.inst",
+                        "virtualization": "docker",
+                        "instance_number": 1,
+                    }
+                ).encode(),
+            )
+        ]
 
-    def test_skips_publish_without_worker_id_but_still_erases(self):
+    def test_skips_publish_without_worker_id_but_still_erases(self, bus):
         job = _job([{"instance_number": 2}])
         with (
             patch.object(job_management.job_operations, "get_job_by_id", return_value=job),
             patch.object(job_management.job_operations, "delete_job_instance") as del_inst,
             patch.object(job_management.job_operations, "delete_job"),
-            patch("clients.mqtt_client.mqtt_publish_edge_delete") as publish,
         ):
-            job_management.delete_job_instance("job1", 2)
+            workerlink.undeploy_instance("job1", 2)
 
-        publish.assert_not_called()
+        assert bus.published == []
         del_inst.assert_called_once_with("job1", 2)
 
-    def test_minus_one_publishes_for_all_and_deletes_job_returning_empty_dict(self):
+    def test_minus_one_publishes_for_all_and_deletes_job_returning_empty_dict(self, bus):
         job = _job(
             [
                 {"instance_number": 1, "worker_id": "nodeA"},
@@ -66,42 +88,39 @@ class TestDeleteJobInstance:
             patch.object(job_management.job_operations, "get_job_by_id", return_value=job),
             patch.object(job_management.job_operations, "delete_job_instance") as del_inst,
             patch.object(job_management.job_operations, "delete_job") as del_job,
-            patch("clients.mqtt_client.mqtt_publish_edge_delete") as publish,
         ):
-            result = job_management.delete_job_instance("job1", -1)
+            result = workerlink.undeploy_instance("job1", -1)
 
-        assert publish.call_count == 2
+        assert len(bus.published) == 2
         assert del_inst.call_count == 2
         del_job.assert_called_once_with("job1")
         # once every instance is erased the function returns {} rather than
         # re-fetching the (now deleted) job
         assert result == {}
 
-    def test_erase_false_publishes_without_db_delete(self):
+    def test_erase_false_publishes_without_db_delete(self, bus):
         job = _job([{"instance_number": 1, "worker_id": "nodeA"}])
         with (
             patch.object(job_management.job_operations, "get_job_by_id", return_value=job),
             patch.object(job_management.job_operations, "delete_job_instance") as del_inst,
             patch.object(job_management.job_operations, "delete_job") as del_job,
-            patch("clients.mqtt_client.mqtt_publish_edge_delete") as publish,
         ):
-            job_management.delete_job_instance("job1", 1, erase=False)
+            workerlink.undeploy_instance("job1", 1, erase=False)
 
-        publish.assert_called_once()
+        assert len(bus.published) == 1
         del_inst.assert_not_called()
         del_job.assert_not_called()
 
-    def test_non_matching_instance_publishes_nothing(self):
+    def test_non_matching_instance_publishes_nothing(self, bus):
         job = _job([{"instance_number": 1, "worker_id": "nodeA"}])
         with (
             patch.object(job_management.job_operations, "get_job_by_id", return_value=job),
             patch.object(job_management.job_operations, "delete_job_instance") as del_inst,
             patch.object(job_management.job_operations, "delete_job") as del_job,
-            patch("clients.mqtt_client.mqtt_publish_edge_delete") as publish,
         ):
-            job_management.delete_job_instance("job1", 99)
+            workerlink.undeploy_instance("job1", 99)
 
-        publish.assert_not_called()
+        assert bus.published == []
         del_inst.assert_not_called()
         del_job.assert_not_called()
 
@@ -121,7 +140,7 @@ class TestSchedulingResultDeploy:
             patch.object(service_blueprints.job_management, "update_status") as ust,
             patch.object(service_blueprints.job_operations, "get_job_by_id", return_value=job),
             patch.object(service_blueprints, "network_notify_deployment") as notify,
-            patch.object(service_blueprints, "mqtt_publish_edge_deploy") as deploy,
+            patch.object(service_blueprints, "publish_deploy") as deploy,
         ):
             response = self.client.post(
                 "/api/result/deploy", json={"job_id": "job1/2", "candidate_id": "node1"}
@@ -131,7 +150,7 @@ class TestSchedulingResultDeploy:
         uin.assert_called_once_with("job1", 2, "node1")
         ust.assert_called_once_with("job1", 2, "NODE_SCHEDULED")
         notify.assert_called_once_with("job1", job)
-        # instance_number reaches mqtt_publish_edge_deploy as the raw string
+        # instance_number reaches publish_deploy as the raw string
         # split out of "job_id", never cast to int
         deploy.assert_called_once_with("node1", job, "2")
 
@@ -145,7 +164,7 @@ class TestSchedulingResultDeploy:
         with (
             patch.object(service_blueprints.job_operations, "update_job_status") as ujs,
             patch.object(service_blueprints.job_management, "update_instance_node") as uin,
-            patch.object(service_blueprints, "mqtt_publish_edge_deploy") as deploy,
+            patch.object(service_blueprints, "publish_deploy") as deploy,
         ):
             response = self.client.post(
                 "/api/result/deploy",
@@ -163,7 +182,7 @@ class TestSchedulingResultDeploy:
             patch.object(service_blueprints.job_management, "update_status"),
             patch.object(service_blueprints.job_operations, "get_job_by_id", return_value=None),
             patch.object(service_blueprints, "network_notify_deployment") as notify,
-            patch.object(service_blueprints, "mqtt_publish_edge_deploy") as deploy,
+            patch.object(service_blueprints, "publish_deploy") as deploy,
         ):
             response = self.client.post(
                 "/api/result/deploy", json={"job_id": "job1/2", "candidate_id": "node1"}

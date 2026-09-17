@@ -1,4 +1,4 @@
-package mqtt
+package clusterlink
 
 import (
 	"encoding/json"
@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"go_node_engine/model"
+
+	messaging "github.com/oakestra/oakestra/libraries/oakestra_messaging_go"
 
 	"gotest.tools/v3/assert"
 )
@@ -37,9 +39,7 @@ func TestControlDeployContract_UnmarshalsIntoService(t *testing.T) {
 }
 
 func TestDeployHandler_Success_ReportsInstantiationThenCreated(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 	nodeIP = func() string { return "10.0.0.7" }
 
 	proceed := make(chan struct{})
@@ -52,11 +52,11 @@ func TestDeployHandler_Success_ReportsInstantiationThenCreated(t *testing.T) {
 	provider := &fakeProvider{rt: rt}
 
 	payload := []byte(`{"job_name":"app.ns.svc.inst","instance_number":1,"virtualization":"docker"}`)
-	deployHandler(fc, &fakeMessage{payload: payload}, provider)
+	deployHandler(messaging.Message{Payload: payload}, provider)
 
-	calls := awaitPublish(t, fc, 1, 2*time.Second)
+	calls := awaitPublish(t, mb, 1, 2*time.Second)
 	var status ServiceStatus
-	assert.NilError(t, json.Unmarshal([]byte(calls[0].payload), &status))
+	assert.NilError(t, json.Unmarshal(calls[0].Payload, &status))
 	assert.Equal(t, status.Status, model.SERVICE_INSTANTIATION)
 
 	// While Deploy is still blocked, the service must show up in the
@@ -68,8 +68,8 @@ func TestDeployHandler_Success_ReportsInstantiationThenCreated(t *testing.T) {
 
 	close(proceed)
 
-	calls = awaitPublish(t, fc, 2, 2*time.Second)
-	assert.NilError(t, json.Unmarshal([]byte(calls[1].payload), &status))
+	calls = awaitPublish(t, mb, 2, 2*time.Second)
+	assert.NilError(t, json.Unmarshal(calls[1].Payload, &status))
 	assert.Equal(t, status.Status, model.SERVICE_CREATED)
 
 	deadline := time.Now().Add(time.Second)
@@ -80,9 +80,7 @@ func TestDeployHandler_Success_ReportsInstantiationThenCreated(t *testing.T) {
 }
 
 func TestDeployHandler_ForwardsRuntimeTypeAndStatusCallback(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 	nodeIP = func() string { return "10.0.0.7" }
 
 	rt := &fakeRuntime{
@@ -95,13 +93,13 @@ func TestDeployHandler_ForwardsRuntimeTypeAndStatusCallback(t *testing.T) {
 	provider := &fakeProvider{rt: rt}
 
 	payload := []byte(`{"job_name":"app.ns.svc.inst","instance_number":1,"virtualization":"unikernel"}`)
-	deployHandler(fc, &fakeMessage{payload: payload}, provider)
+	deployHandler(messaging.Message{Payload: payload}, provider)
 
-	calls := awaitPublish(t, fc, 3, 2*time.Second)
+	calls := awaitPublish(t, mb, 3, 2*time.Second)
 	var statuses []string
 	for _, c := range calls[:3] {
 		var s ServiceStatus
-		assert.NilError(t, json.Unmarshal([]byte(c.payload), &s))
+		assert.NilError(t, json.Unmarshal(c.Payload, &s))
 		statuses = append(statuses, s.Status)
 	}
 	assert.DeepEqual(t, statuses, []string{model.SERVICE_INSTANTIATION, model.SERVICE_RUNNING, model.SERVICE_CREATED})
@@ -109,9 +107,7 @@ func TestDeployHandler_ForwardsRuntimeTypeAndStatusCallback(t *testing.T) {
 }
 
 func TestDeployHandler_Error_ReportsFailedWithDetail(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 	nodeIP = func() string { return "10.0.0.7" }
 
 	deployErr := errors.New("image pull failed")
@@ -119,34 +115,31 @@ func TestDeployHandler_Error_ReportsFailedWithDetail(t *testing.T) {
 	provider := &fakeProvider{rt: rt}
 
 	payload := []byte(`{"job_name":"app.ns.svc.inst","instance_number":1,"virtualization":"docker"}`)
-	deployHandler(fc, &fakeMessage{payload: payload}, provider)
+	deployHandler(messaging.Message{Payload: payload}, provider)
 
-	calls := awaitPublish(t, fc, 2, 2*time.Second)
+	calls := awaitPublish(t, mb, 2, 2*time.Second)
 	var status ServiceStatus
-	assert.NilError(t, json.Unmarshal([]byte(calls[1].payload), &status))
+	assert.NilError(t, json.Unmarshal(calls[1].Payload, &status))
 	assert.Equal(t, status.Status, model.SERVICE_FAILED)
 	assert.Equal(t, status.Detail, deployErr.Error())
 }
 
 func TestDeployHandler_MalformedJSON_NoPublishNoDeploy(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
+	mb := installBus(t)
 
 	deployed := false
 	rt := &fakeRuntime{deployFn: func(model.Service, func(model.Service)) error { deployed = true; return nil }}
 	provider := &fakeProvider{rt: rt}
 
-	deployHandler(fc, &fakeMessage{payload: []byte("not-json")}, provider)
+	deployHandler(messaging.Message{Payload: []byte("not-json")}, provider)
 
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, len(fc.publishCalls()), 0)
+	assert.Equal(t, len(mb.Published()), 0)
 	assert.Assert(t, !deployed)
 }
 
 func TestDeployHandler_EmptyObject_StillDeploysZeroService(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 	nodeIP = func() string { return "" }
 
 	// json.Unmarshal of "{}" into model.Service succeeds with every field at its
@@ -156,57 +149,53 @@ func TestDeployHandler_EmptyObject_StillDeploysZeroService(t *testing.T) {
 	rt := &fakeRuntime{deployFn: func(model.Service, func(model.Service)) error { deployed = true; return nil }}
 	provider := &fakeProvider{rt: rt}
 
-	deployHandler(fc, &fakeMessage{payload: []byte("{}")}, provider)
+	deployHandler(messaging.Message{Payload: []byte("{}")}, provider)
 
-	awaitPublish(t, fc, 2, 2*time.Second)
+	awaitPublish(t, mb, 2, 2*time.Second)
 	assert.Assert(t, deployed)
 	assert.DeepEqual(t, provider.requestedTypes(), []model.RuntimeType{""})
 }
 
 func TestDeleteHandler_Success_ReportsUndeployed(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 	nodeIP = func() string { return "10.0.0.7" }
 
 	rt := &fakeRuntime{undeployFn: func(string, int) error { return nil }}
 	provider := &fakeProvider{rt: rt}
 
 	payload := []byte(`{"job_name":"app.ns.svc.inst","instance_number":1,"virtualization":"docker"}`)
-	deleteHandler(fc, &fakeMessage{payload: payload}, provider)
+	deleteHandler(messaging.Message{Payload: payload}, provider)
 
-	calls := awaitPublish(t, fc, 1, 2*time.Second)
+	calls := awaitPublish(t, mb, 1, 2*time.Second)
 	var status ServiceStatus
-	assert.NilError(t, json.Unmarshal([]byte(calls[0].payload), &status))
+	assert.NilError(t, json.Unmarshal(calls[0].Payload, &status))
 	assert.Equal(t, status.Status, model.SERVICE_UNDEPLOYED)
 	assert.Equal(t, status.Sname, "app.ns.svc.inst")
 }
 
 func TestDeleteHandler_Error_PublishesNothing(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
+	mb := installBus(t)
 
 	rt := &fakeRuntime{undeployFn: func(string, int) error { return errors.New("not found") }}
 	provider := &fakeProvider{rt: rt}
 
 	payload := []byte(`{"job_name":"app.ns.svc.inst","instance_number":1,"virtualization":"docker"}`)
-	deleteHandler(fc, &fakeMessage{payload: payload}, provider)
+	deleteHandler(messaging.Message{Payload: payload}, provider)
 
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, len(fc.publishCalls()), 0)
+	assert.Equal(t, len(mb.Published()), 0)
 }
 
 func TestDeleteHandler_MalformedJSON_NoUndeploy(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
+	mb := installBus(t)
 
 	undeployed := false
 	rt := &fakeRuntime{undeployFn: func(string, int) error { undeployed = true; return nil }}
 	provider := &fakeProvider{rt: rt}
 
-	deleteHandler(fc, &fakeMessage{payload: []byte("not-json")}, provider)
+	deleteHandler(messaging.Message{Payload: []byte("not-json")}, provider)
 
 	time.Sleep(50 * time.Millisecond)
 	assert.Assert(t, !undeployed)
-	assert.Equal(t, len(fc.publishCalls()), 0)
+	assert.Equal(t, len(mb.Published()), 0)
 }

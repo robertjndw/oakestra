@@ -5,9 +5,10 @@ import threading
 import time
 import uuid
 
-import clients.mqtt_client as mqtt_client
 import paho.mqtt.client as paho_mqtt
 import pytest
+from clients import workerlink
+from oakestra_messaging.mqtt import MqttBus
 
 
 @pytest.fixture(scope="session")
@@ -27,45 +28,16 @@ def node_id():
 
 
 @pytest.fixture
-def cm_client(broker_addr, monkeypatch):
+def cm_bus(broker_addr):
     host, port = broker_addr
-    monkeypatch.setenv("MQTT_BROKER_URL", host)
-    monkeypatch.setenv("MQTT_BROKER_PORT", str(port))
-    monkeypatch.delenv("MQTT_CERT", raising=False)
+    bus = MqttBus(host, port, qos=0)
+    workerlink.start(bus)
+    bus.connect()
 
-    # handle_connect() fires the three subscribe() calls itself; hook
-    # on_subscribe from inside it (same thread, before any SUBACK can arrive)
-    # so the test can block until the broker has actually acknowledged all
-    # three subscriptions instead of racing a fixed sleep.
-    subscribed = threading.Event()
-    original_handle_connect = mqtt_client.handle_connect
+    yield bus
 
-    def wrapped_handle_connect(client, userdata, flags, rc):
-        acked = []
-
-        def on_subscribe(client, userdata, mid, granted_qos):
-            acked.append(mid)
-            if len(acked) >= 3:
-                subscribed.set()
-
-        client.on_subscribe = on_subscribe
-        original_handle_connect(client, userdata, flags, rc)
-
-    monkeypatch.setattr(mqtt_client, "handle_connect", wrapped_handle_connect)
-
-    mqtt_client.mqtt_init(None)
-    client = mqtt_client.mqtt
-    if not subscribed.wait(timeout=5):
-        raise AssertionError("cluster_manager did not subscribe to all three topics in time")
-
-    yield client
-
-    try:
-        client.loop_stop()
-        client.disconnect()
-    except Exception:
-        pass
-    mqtt_client.mqtt = None
+    bus.close()
+    workerlink._bus = None
 
 
 class Peer:

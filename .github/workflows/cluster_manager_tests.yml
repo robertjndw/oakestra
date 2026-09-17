@@ -1,0 +1,40 @@
+name: Cluster Manager Tests
+
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: "3.10"
+
+      - name: Start Mosquitto broker
+        run: |
+          docker run -d --name mqtt -p 11883:10003 \
+            -v $GITHUB_WORKSPACE/cluster_orchestrator/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
+            eclipse-mosquitto:2.0
+
+      - name: Install test dependencies
+        working-directory: cluster_orchestrator/cluster-manager
+        run: |
+          pip install -r requirements-test.txt
+
+      - name: Install local Oakestra libraries
+        working-directory: cluster_orchestrator/cluster-manager
+        run: |
+          pip install ../../libraries/oakestra_utils_library ../../libraries/resource_abstractor_client ../../libraries/oakestra_messaging
+
+      - name: Run test suite
+        working-directory: cluster_orchestrator/cluster-manager
+        env:
+          OAKESTRA_TEST_MQTT_ADDR: 127.0.0.1:11883
+        run: |
+          pytest -v

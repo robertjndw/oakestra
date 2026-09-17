@@ -129,7 +129,7 @@
         {
             "label": "install-cluster-manager-dependencies",
             "type": "shell",
-            "command": "${command:python.interpreterPath} -m pip install -r ${workspaceRoot}/cluster_orchestrator/cluster-manager/requirements.txt && ${command:python.interpreterPath} -m pip install ${workspaceRoot}/libraries/oakestra_utils_library ${workspaceRoot}/libraries/resource_abstractor_client" ,
+            "command": "${command:python.interpreterPath} -m pip install -r ${workspaceRoot}/cluster_orchestrator/cluster-manager/requirements.txt && ${command:python.interpreterPath} -m pip install ${workspaceRoot}/libraries/oakestra_utils_library ${workspaceRoot}/libraries/resource_abstractor_client ${workspaceRoot}/libraries/oakestra_messaging" ,
             "problemMatcher": []
         },
         {

@@ -1,4 +1,4 @@
-package mqtt
+package clusterlink
 
 import (
 	"encoding/json"
@@ -11,12 +11,18 @@ import (
 	"go_node_engine/config"
 	"go_node_engine/model"
 
+	mqttbus "github.com/oakestra/oakestra/libraries/oakestra_messaging_go/mqtt"
+
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"gotest.tools/v3/assert"
 )
 
+func TestClientID_AppendsNeSuffix(t *testing.T) {
+	assert.Equal(t, ClientID("node1"), "node1-ne")
+}
+
 // brokerFromEnv skips the test unless a real broker address was provided,
-// keeping these tests out of the default `go test ./mqtt/` run.
+// keeping these tests out of the default `go test ./clusterlink/` run.
 func brokerFromEnv(t *testing.T) (host, port string) {
 	t.Helper()
 	addr := os.Getenv("OAKESTRA_TEST_MQTT_ADDR")
@@ -111,49 +117,25 @@ func (p *peer) publish(t *testing.T, topic string, payload []byte, qos byte) {
 	assert.NilError(t, tok.Error())
 }
 
-// startNodeEngineClient runs InitMqtt against a real broker and blocks until
-// the client's OnConnect handler has actually run, so the caller never races
-// the subscribe that happens inside it.
-func startNodeEngineClient(t *testing.T, host, port, nodeID string, provider RuntimeProvider) mqtt.Client {
+// startNodeEngineClient builds a real mqtt-backed bus, wires it through Init
+// and connects it, blocking until the broker has acked the subscriptions.
+func startNodeEngineClient(t *testing.T, host, port, id string, provider RuntimeProvider) {
 	t.Helper()
 	resetForTest(t)
 	nodeIP = func() string { return "10.0.0.7" }
 
-	connected := make(chan struct{}, 1)
-	newClient = func(opts *mqtt.ClientOptions) mqtt.Client {
-		original := opts.OnConnect
-		opts.OnConnect = func(c mqtt.Client) {
-			if original != nil {
-				original(c)
-			}
-			select {
-			case connected <- struct{}{}:
-			default:
-			}
-		}
-		return mqtt.NewClient(opts)
-	}
+	b, err := mqttbus.NewBus(mqttbus.Config{
+		BrokerURL:  host,
+		BrokerPort: port,
+		ClientID:   ClientID(id),
+		QoS:        1,
+	})
+	assert.NilError(t, err)
 
-	InitMqtt(nodeID, host, port, "", "", provider)
+	Init(b, id, provider)
 
-	select {
-	case <-connected:
-	case <-time.After(10 * time.Second):
-		t.Fatal("node engine mqtt client did not connect within 10s")
-	}
-
-	return mainMqttClient
-}
-
-func TestIntegration_ConnectsWithNeSuffixClientID(t *testing.T) {
-	host, port := brokerFromEnv(t)
-	nodeID := fmt.Sprintf("it-%d", time.Now().UnixNano())
-
-	client := startNodeEngineClient(t, host, port, nodeID, &fakeProvider{rt: &fakeRuntime{}})
-
-	assert.Assert(t, client.IsConnected())
-	reader := client.OptionsReader()
-	assert.Equal(t, reader.ClientID(), nodeID+"-ne")
+	assert.NilError(t, b.Connect())
+	t.Cleanup(func() { _ = b.Close() })
 }
 
 func TestIntegration_Deploy_ReportsInstantiationThenCreated(t *testing.T) {
