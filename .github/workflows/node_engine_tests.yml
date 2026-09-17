@@ -1,0 +1,44 @@
+name: Node Engine Tests
+
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go_node_engine/go.mod
+
+      - name: Check formatting
+        working-directory: go_node_engine
+        run: |
+          fmt_out="$(gofmt -l . | grep -v third_party || true)"
+          if [ -n "$fmt_out" ]; then
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: Vet
+        working-directory: go_node_engine
+        run: go vet ./clusterlink/ ./config/ ./model/ ./jobs/
+
+      - name: Run test suite
+        working-directory: go_node_engine
+        run: go test -race ./clusterlink/ ./config/
+
+      # go_node_engine only builds on Linux (containerd/netlink deps), so this
+      # step, not `go build ./...` above, is what proves the tree compiles.
+      - name: Build for linux/amd64
+        working-directory: go_node_engine
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: go build ./...

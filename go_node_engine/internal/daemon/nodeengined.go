@@ -2,13 +2,13 @@ package main
 
 import (
 	"go_node_engine/addons"
+	"go_node_engine/clusterlink"
 	"go_node_engine/cmd"
 	"go_node_engine/config"
 	"go_node_engine/csi"
 	"go_node_engine/jobs"
 	"go_node_engine/logger"
 	"go_node_engine/model"
-	"go_node_engine/mqtt"
 	"go_node_engine/requests"
 	"go_node_engine/virtualization"
 	"os"
@@ -19,6 +19,9 @@ import (
 	"time"
 
 	"github.com/containers/storage/pkg/reexec"
+
+	messaging "github.com/oakestra/oakestra/libraries/oakestra_messaging_go"
+	mqttbus "github.com/oakestra/oakestra/libraries/oakestra_messaging_go/mqtt"
 )
 
 const MONITORING_CYCLE = time.Second * 2
@@ -108,13 +111,40 @@ func main() {
 		}
 	}
 
-	// binding the node MQTT client
-	mqtt.InitMqtt(handshakeResult.NodeId, configs.ClusterAddress, handshakeResult.MqttPort, configs.CertFile, configs.KeyFile, mqtt.AdaptRuntimeProvider(runtimeManager.GetRuntime))
+	// binding the node's messaging bus and cluster link
+	backend, err := messaging.BackendFromEnv()
+	if err != nil {
+		logger.ErrorLogger().Fatal(err)
+	}
+	var bus messaging.Bus
+	switch backend {
+	case messaging.BackendMQTT:
+		bus, err = mqttbus.NewBus(mqttbus.Config{
+			BrokerURL:   configs.ClusterAddress,
+			BrokerPort:  handshakeResult.MqttPort,
+			ClientID:    clusterlink.ClientID(handshakeResult.NodeId),
+			CertFile:    configs.CertFile,
+			KeyFile:     configs.KeyFile,
+			QoS:         1,
+			Logger:      logger.InfoLogger(),
+			ErrorLogger: logger.ErrorLogger(),
+		})
+		if err != nil {
+			logger.ErrorLogger().Fatal(err)
+		}
+	}
+	clusterlink.Init(bus, handshakeResult.NodeId, clusterlink.AdaptRuntimeProvider(runtimeManager.GetRuntime))
+	// connecting asynchronously keeps startup from blocking on the broker handshake.
+	go func() {
+		if err := bus.Connect(); err != nil {
+			panic(err)
+		}
+	}()
 
 	// starting node status background job.
-	jobs.NodeStatusUpdater(MONITORING_CYCLE, mqtt.ReportNodeInformation)
+	jobs.NodeStatusUpdater(MONITORING_CYCLE, clusterlink.ReportNodeInformation)
 	// starting container resources background monitor.
-	jobs.StartServicesMonitoring(runtimeManager, MONITORING_CYCLE, mqtt.ReportServiceResources)
+	jobs.StartServicesMonitoring(runtimeManager, MONITORING_CYCLE, clusterlink.ReportServiceResources)
 
 	// catch SIGETRM or SIGINTERRUPT
 	termination := make(chan os.Signal, 1)

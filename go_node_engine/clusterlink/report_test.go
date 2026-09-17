@@ -1,4 +1,4 @@
-package mqtt
+package clusterlink
 
 import (
 	"encoding/json"
@@ -12,9 +12,7 @@ import (
 )
 
 func TestReportServiceStatus_MatchesContract(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 	nodeIP = func() string { return "10.0.0.7" }
 
 	ReportServiceStatus(model.Service{
@@ -24,67 +22,56 @@ func TestReportServiceStatus_MatchesContract(t *testing.T) {
 		Instance:     1,
 	})
 
-	calls := awaitPublish(t, fc, 1, time.Second)
-	assert.Equal(t, calls[0].topic, "nodes/n1/job")
-	assert.Equal(t, calls[0].qos, byte(1))
-	assert.Equal(t, calls[0].retained, false)
+	calls := awaitPublish(t, mb, 1, time.Second)
+	assert.Equal(t, calls[0].Topic, "nodes/n1/job")
 	// Compare the whole object, not a few fields, so an accidental extra key
 	// fails too.
-	assertJSONEqual(t, []byte(calls[0].payload), loadContract(t, "job_status.json"))
+	assertJSONEqual(t, calls[0].Payload, loadContract(t, "job_status.json"))
 }
 
 func TestReportServiceStatus_EmptyNodeIP_PublishesEmptyString(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 	nodeIP = func() string { return "" }
 
 	ReportServiceStatus(model.Service{Sname: "app.ns.svc.inst", Status: model.SERVICE_CREATED, Instance: 1})
 
-	calls := awaitPublish(t, fc, 1, time.Second)
+	calls := awaitPublish(t, mb, 1, time.Second)
 	var status ServiceStatus
-	assert.NilError(t, json.Unmarshal([]byte(calls[0].payload), &status))
+	assert.NilError(t, json.Unmarshal(calls[0].Payload, &status))
 	assert.Equal(t, status.Publicip, "")
 }
 
 func TestReportServiceResources_WrapsInServicesArray(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 
 	ReportServiceResources([]model.Resources{{
 		Cpu: "1.50", Memory: "2.00", Disk: "0", Logs: "hello\n",
 		Sname: "app.ns.svc.inst", Runtime: "docker", Instance: 1, Status: "RUNNING",
 	}})
 
-	calls := awaitPublish(t, fc, 1, time.Second)
-	assert.Equal(t, calls[0].topic, "nodes/n1/jobs/resources")
-	assert.Equal(t, calls[0].qos, byte(1))
-	assertJSONEqual(t, []byte(calls[0].payload), loadContract(t, "jobs_resources.json"))
+	calls := awaitPublish(t, mb, 1, time.Second)
+	assert.Equal(t, calls[0].Topic, "nodes/n1/jobs/resources")
+	assertJSONEqual(t, calls[0].Payload, loadContract(t, "jobs_resources.json"))
 }
 
 func TestReportServiceResources_NilVsEmptySliceMarshalDiffers(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 
 	// encoding/json marshals a nil slice as `null` but an empty, non-nil slice
 	// as `[]`. ReportServiceResources never normalizes this, so a nil resources
 	// argument and a monitoring tick with zero services look different on the
 	// wire.
 	ReportServiceResources(nil)
-	nilCalls := awaitPublish(t, fc, 1, time.Second)
-	assert.Equal(t, nilCalls[0].payload, `{"services":null}`)
+	nilCalls := awaitPublish(t, mb, 1, time.Second)
+	assert.Equal(t, string(nilCalls[0].Payload), `{"services":null}`)
 
 	ReportServiceResources([]model.Resources{})
-	emptyCalls := awaitPublish(t, fc, 2, time.Second)
-	assert.Equal(t, emptyCalls[1].payload, `{"services":[]}`)
+	emptyCalls := awaitPublish(t, mb, 2, time.Second)
+	assert.Equal(t, string(emptyCalls[1].Payload), `{"services":[]}`)
 }
 
 func TestReportNodeInformation_KeySetIncludesUntaggedFields(t *testing.T) {
-	resetForTest(t)
-	fc := installFakeClient(t)
-	clientID = "n1"
+	mb := installBus(t)
 
 	node := model.Node{
 		Id:              "node1",
@@ -117,16 +104,16 @@ func TestReportNodeInformation_KeySetIncludesUntaggedFields(t *testing.T) {
 
 	ReportNodeInformation(node)
 
-	calls := awaitPublish(t, fc, 1, time.Second)
-	assert.Equal(t, calls[0].topic, "nodes/n1/information")
+	calls := awaitPublish(t, mb, 1, time.Second)
+	assert.Equal(t, calls[0].Topic, "nodes/n1/information")
 	// The contract fixture carries five untagged Go fields (Overlay,
 	// OverlaySocket, LogDirectory, NetManagerPort, ClusterAddress) that leak
 	// onto the wire under their exported Go names because model.Node has no
 	// json tag for them.
-	assertJSONEqual(t, []byte(calls[0].payload), loadContract(t, "node_information.json"))
+	assertJSONEqual(t, calls[0].Payload, loadContract(t, "node_information.json"))
 
 	var asMap map[string]any
-	assert.NilError(t, json.Unmarshal([]byte(calls[0].payload), &asMap))
+	assert.NilError(t, json.Unmarshal(calls[0].Payload, &asMap))
 	assert.Equal(t, len(asMap), 26)
 }
 
