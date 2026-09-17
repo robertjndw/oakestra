@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"go_node_engine/logger"
 	"go_node_engine/model"
-	"go_node_engine/virtualization"
 	"strings"
 	"time"
 
@@ -20,6 +19,32 @@ var clientID = ""
 var mainMqttClient mqtt.Client
 var brokerUrl = ""
 var brokerPort = ""
+
+// ServiceRuntime is the subset of a virtualization runtime the MQTT handlers use.
+type ServiceRuntime interface {
+	Deploy(service model.Service, statusChangeNotificationHandler func(service model.Service)) error
+	Undeploy(sname string, instance int) error
+}
+
+// RuntimeProvider resolves the runtime for a runtime type.
+type RuntimeProvider interface {
+	GetRuntime(runtime model.RuntimeType) ServiceRuntime
+}
+
+type RuntimeProviderFunc func(model.RuntimeType) ServiceRuntime
+
+func (f RuntimeProviderFunc) GetRuntime(rt model.RuntimeType) ServiceRuntime { return f(rt) }
+
+// AdaptRuntimeProvider wraps a getter such as (*virtualization.RuntimeManager).GetRuntime, whose
+// return type lives in an internal package this package cannot import.
+func AdaptRuntimeProvider[R ServiceRuntime](get func(model.RuntimeType) R) RuntimeProvider {
+	return RuntimeProviderFunc(func(rt model.RuntimeType) ServiceRuntime { return get(rt) })
+}
+
+// Indirections so tests can inject a fake client and avoid model.GetNodeInfo(), which reads
+// /etc/oakestra and exits the process when that fails.
+var newClient = mqtt.NewClient
+var nodeIP = func() string { return model.GetNodeInfo().Ip }
 
 var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
 	logger.InfoLogger().Printf("DEBUG - Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
@@ -59,7 +84,7 @@ func InitMqtt(
 	brokerport string,
 	certFile string,
 	keyFile string,
-	runtimeManager *virtualization.RuntimeManager,
+	runtimeManager RuntimeProvider,
 ) {
 
 	if clientID != "" {
@@ -101,7 +126,7 @@ func InitMqtt(
 }
 
 func runMqttClient(opts *mqtt.ClientOptions) {
-	mainMqttClient = mqtt.NewClient(opts)
+	mainMqttClient = newClient(opts)
 	if token := mainMqttClient.Connect(); token.Wait() && token.Error() != nil {
 		panic(token.Error())
 	}
@@ -116,15 +141,15 @@ func publishToBroker(topic string, payload string) {
 }
 
 func withRuntimeManager(
-	handler func(mqtt.Client, mqtt.Message, *virtualization.RuntimeManager),
-	runtimeManager *virtualization.RuntimeManager,
+	handler func(mqtt.Client, mqtt.Message, RuntimeProvider),
+	runtimeManager RuntimeProvider,
 ) func(mqtt.Client, mqtt.Message) {
 	return func(client mqtt.Client, msg mqtt.Message) {
 		handler(client, msg, runtimeManager)
 	}
 }
 
-func deployHandler(client mqtt.Client, msg mqtt.Message, runtimeManager *virtualization.RuntimeManager) {
+func deployHandler(client mqtt.Client, msg mqtt.Message, runtimeManager RuntimeProvider) {
 	logger.InfoLogger().Printf("Received deployment request with payload: %s", string(msg.Payload()))
 	service := model.Service{}
 	err := json.Unmarshal(msg.Payload(), &service)
@@ -153,7 +178,7 @@ func deployHandler(client mqtt.Client, msg mqtt.Message, runtimeManager *virtual
 	}()
 }
 
-func deleteHandler(client mqtt.Client, msg mqtt.Message, runtimeManager *virtualization.RuntimeManager) {
+func deleteHandler(client mqtt.Client, msg mqtt.Message, runtimeManager RuntimeProvider) {
 	logger.InfoLogger().Printf("Received undeployment request with payload: %s", string(msg.Payload()))
 	service := model.Service{}
 	err := json.Unmarshal(msg.Payload(), &service)
@@ -173,21 +198,28 @@ func deleteHandler(client mqtt.Client, msg mqtt.Message, runtimeManager *virtual
 	}()
 }
 
+// ServiceStatus is the wire format published on nodes/<id>/job.
+type ServiceStatus struct {
+	Sname    string `json:"sname"`
+	Status   string `json:"status"`
+	Detail   string `json:"status_detail"`
+	Instance int    `json:"instance"`
+	Publicip string `json:"publicip"`
+}
+
+// ServiceResources is the wire format published on nodes/<id>/jobs/resources.
+type ServiceResources struct {
+	Services []model.Resources `json:"services"`
+}
+
 // ReportServiceStatus reports the status of the services
 func ReportServiceStatus(service model.Service) {
-	type ServiceStatus struct {
-		Sname    string `json:"sname"`
-		Status   string `json:"status"`
-		Detail   string `json:"status_detail"`
-		Instance int    `json:"instance"`
-		Publicip string `json:"publicip"`
-	}
 	reportStatusStruct := ServiceStatus{
 		Sname:    service.Sname,
 		Status:   service.Status,
 		Detail:   service.StatusDetail,
 		Instance: service.Instance,
-		Publicip: model.GetNodeInfo().Ip,
+		Publicip: nodeIP(),
 	}
 	jsonmsg, err := json.Marshal(reportStatusStruct)
 	if err != nil {
@@ -198,9 +230,6 @@ func ReportServiceStatus(service model.Service) {
 
 // ReportServiceResources reports the resources of the services
 func ReportServiceResources(services []model.Resources) {
-	type ServiceResources struct {
-		Services []model.Resources `json:"services"`
-	}
 	jsonmsg, err := json.Marshal(ServiceResources{Services: services})
 	if err != nil {
 		logger.ErrorLogger().Printf("ERROR: unable to report services resources: %v", err)

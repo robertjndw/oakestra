@@ -1,0 +1,14 @@
+{
+  "services": [
+    {
+      "cpu_percent": "1.50",
+      "memory_percent": "2.00",
+      "disk": "0",
+      "logs": "hello\n",
+      "job_name": "app.ns.svc.inst",
+      "virtualization": "docker",
+      "instance": 1,
+      "status": "RUNNING"
+    }
+  ]
+}
