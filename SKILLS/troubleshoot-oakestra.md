@@ -169,6 +169,8 @@ docker logs <exited_container_name> 2>&1 | tail -50
 | `CLUSTER_ADDRESS env var is not set` (cluster_manager log) | Missing env var — cluster cannot advertise its address to root |
 | `cluster_address is required` (system_manager log) | Cluster connected via gRPC but sent empty `cluster_address` |
 | `Cluster reachability probe failed` / `cluster not reachable at` (system_manager log) | Root cannot reach `http://CLUSTER_ADDRESS:10100/api/cluster/status` — wrong IP, firewall, or cluster_manager not up |
+| `unsupported MESSAGING_BACKEND` (cluster_manager or NodeEngine log, then exit) | `MESSAGING_BACKEND` is set to something other than `mqtt`. The process refuses to start rather than run without a transport — unset the var or fix the typo. |
+| `connect timed out waiting for subscriptions` (cluster_manager or NodeEngine log, then exit) | Broker is reachable but never acked the initial subscriptions within 10s — usually an ACL misconfiguration on the MQTT broker. The service now fails startup instead of running deaf (connected but never receiving messages). Check `mosquitto` ACL/auth config and the client's credentials. |
 
 ---
 
@@ -202,6 +204,10 @@ docker exec cluster_service_manager env 2>/dev/null | grep -E "ROOT_SERVICE_MANA
 - `CLUSTER_ADDRESS` must be non-empty in cluster_manager and must be the **IP/hostname at which the ROOT can reach this cluster manager** (typically the cluster host's default-route IP). It must NOT be `localhost`, `127.0.0.1`, `0.0.0.0`, or a Docker-internal address like `172.17.x.x` / `172.19.x.x` (those are the docker bridge gateway and not routable from the root). In 1-DOC deployments, `CLUSTER_ADDRESS` should equal `SYSTEM_MANAGER_URL`.
 - `REDIS_ADDR` must match `redis://:rootRedis@root_redis:6379` (root) or `redis://:clusterRedis@cluster_redis:6479` (cluster)
 - `CLUSTER_LOCATION` format: `latitude,longitude,radius` (e.g., `48.1,11.6,1000`)
+- `MESSAGING_BACKEND` (cluster_manager and NodeEngine) — optional, defaults to `mqtt`, currently the
+  only valid value. Any other value makes the process exit at startup with `unsupported
+  MESSAGING_BACKEND ...` instead of running without a transport. Unless you are deliberately
+  testing the fail-fast path, leave it unset.
 
 ---
 
@@ -316,6 +322,12 @@ docker logs mqtt 2>&1 | tail -50 | grep -iE "error|refused|disconnect|auth"
 ```
 
 If MQTT is not healthy, `cluster_manager` and `cluster_service_manager` cannot communicate with worker NodeEngines. This blocks all deployment.
+
+`cluster_manager`, `cluster_service_manager`, `NodeEngine`, and `NetManager` all reach MQTT through
+the shared oakestra messaging interface (`oakestra_messaging` / `oakestra_messaging_go`) rather
+than talking to paho directly; on the wire it is still plain MQTT, so the diagnostics above are
+unaffected, but note that an unreadable TLS cert path now fails startup outright instead of
+silently falling back to a plaintext connection.
 
 Check if `override-mosquitto-auth.yml` is being used — if so, authentication credentials must be provided; without them, workers cannot connect.
 
@@ -734,6 +746,21 @@ sudo ufw allow 10003/tcp
 # Verify MQTT is listening externally (not just 127.0.0.1)
 ss -tlnp sport = :10003
 ```
+
+### Fix: cluster_manager or NodeEngine exits with `unsupported MESSAGING_BACKEND`
+```bash
+# Check the current value
+docker exec cluster_manager env | grep ^MESSAGING_BACKEND=
+```
+Unset the var, or set it to `mqtt` (the only supported value today), then restart the container /
+NodeEngine service.
+
+### Fix: cluster_manager or NodeEngine exits with `connect timed out waiting for subscriptions`
+The broker accepted the TCP/TLS connection but never acked the initial subscriptions within 10s.
+1. Confirm the broker is actually healthy (STEP 6).
+2. Check `mosquitto` ACL and auth configuration — a client that connects but is denied a SUBSCRIBE
+   by ACL will hang exactly like this.
+3. If `override-mosquitto-auth.yml` is in use, verify the connecting client's credentials.
 
 ### Fix: Docker socket permission denied
 ```bash
