@@ -103,15 +103,6 @@ func (p *bareSubscriber) expect(t *testing.T, timeout time.Duration) paho.Messag
 	}
 }
 
-func (p *bareSubscriber) expectNone(t *testing.T, timeout time.Duration) {
-	t.Helper()
-	select {
-	case m := <-p.messages:
-		t.Fatalf("expected no message, got one on %s: %s", m.Topic(), m.Payload())
-	case <-time.After(timeout):
-	}
-}
-
 func TestIntegration_RoundTripWithPlusPattern(t *testing.T) {
 	host, port := brokerFromEnv(t)
 	suffix := uniqueSuffix()

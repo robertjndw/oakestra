@@ -16,11 +16,11 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Start Mosquitto broker
+      - name: Start NATS broker (MQTT compatibility mode)
         run: |
           docker run -d --name mqtt -p 11883:10003 \
-            -v $GITHUB_WORKSPACE/cluster_orchestrator/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro \
-            eclipse-mosquitto:2.0
+            -v $GITHUB_WORKSPACE/cluster_orchestrator/nats/nats.conf:/etc/nats/nats.conf:ro \
+            nats:2.14-alpine -c /etc/nats/nats.conf
 
       - name: Install test dependencies
         working-directory: cluster_orchestrator/cluster-manager

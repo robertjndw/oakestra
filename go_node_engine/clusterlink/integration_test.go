@@ -85,9 +85,9 @@ func newPeer(t *testing.T, host, port, nodeID string) *peer {
 
 // expect waits for a message on the given topic, ignoring messages on other
 // topics (e.g. the node's own information heartbeat) that may interleave.
-func (p *peer) expect(t *testing.T, topic string, timeout time.Duration) mqtt.Message {
+func (p *peer) expect(t *testing.T, topic string) mqtt.Message {
 	t.Helper()
-	deadline := time.After(timeout)
+	deadline := time.After(5 * time.Second)
 	for {
 		select {
 		case m := <-p.messages:
@@ -110,9 +110,9 @@ func (p *peer) expectNone(t *testing.T, timeout time.Duration) {
 	}
 }
 
-func (p *peer) publish(t *testing.T, topic string, payload []byte, qos byte) {
+func (p *peer) publish(t *testing.T, topic string, payload []byte) {
 	t.Helper()
-	tok := p.client.Publish(topic, qos, false, payload)
+	tok := p.client.Publish(topic, 0, false, payload)
 	assert.Assert(t, tok.WaitTimeout(5*time.Second), "publish timed out")
 	assert.NilError(t, tok.Error())
 }
@@ -156,10 +156,10 @@ func TestIntegration_Deploy_ReportsInstantiationThenCreated(t *testing.T) {
 		"virtualization":  "docker",
 	})
 	assert.NilError(t, err)
-	peer.publish(t, fmt.Sprintf("nodes/%s/control/deploy", nodeID), payload, 0)
+	peer.publish(t, fmt.Sprintf("nodes/%s/control/deploy", nodeID), payload)
 
 	jobTopic := fmt.Sprintf("nodes/%s/job", nodeID)
-	msg := peer.expect(t, jobTopic, 5*time.Second)
+	msg := peer.expect(t, jobTopic)
 	assert.Equal(t, msg.Qos(), byte(1))
 	assert.Equal(t, msg.Retained(), false)
 	var status ServiceStatus
@@ -168,7 +168,7 @@ func TestIntegration_Deploy_ReportsInstantiationThenCreated(t *testing.T) {
 
 	close(proceed)
 
-	msg = peer.expect(t, jobTopic, 5*time.Second)
+	msg = peer.expect(t, jobTopic)
 	assert.NilError(t, json.Unmarshal(msg.Payload(), &status))
 	assert.Equal(t, status.Status, model.SERVICE_CREATED)
 }
@@ -189,12 +189,12 @@ func TestIntegration_Deploy_ErrorReportsFailed(t *testing.T) {
 		"virtualization":  "docker",
 	})
 	assert.NilError(t, err)
-	peer.publish(t, fmt.Sprintf("nodes/%s/control/deploy", nodeID), payload, 0)
+	peer.publish(t, fmt.Sprintf("nodes/%s/control/deploy", nodeID), payload)
 
 	jobTopic := fmt.Sprintf("nodes/%s/job", nodeID)
-	peer.expect(t, jobTopic, 5*time.Second) // INSTANTIATION, not under test here
+	peer.expect(t, jobTopic) // INSTANTIATION, not under test here
 
-	msg := peer.expect(t, jobTopic, 5*time.Second)
+	msg := peer.expect(t, jobTopic)
 	var status ServiceStatus
 	assert.NilError(t, json.Unmarshal(msg.Payload(), &status))
 	assert.Equal(t, status.Status, model.SERVICE_FAILED)
@@ -215,9 +215,9 @@ func TestIntegration_Delete_ReportsUndeployed(t *testing.T) {
 		"virtualization":  "docker",
 	})
 	assert.NilError(t, err)
-	peer.publish(t, fmt.Sprintf("nodes/%s/control/delete", nodeID), payload, 0)
+	peer.publish(t, fmt.Sprintf("nodes/%s/control/delete", nodeID), payload)
 
-	msg := peer.expect(t, fmt.Sprintf("nodes/%s/job", nodeID), 5*time.Second)
+	msg := peer.expect(t, fmt.Sprintf("nodes/%s/job", nodeID))
 	var status ServiceStatus
 	assert.NilError(t, json.Unmarshal(msg.Payload(), &status))
 	assert.Equal(t, status.Status, model.SERVICE_UNDEPLOYED)
@@ -237,7 +237,7 @@ func TestIntegration_Delete_ErrorPublishesNothing(t *testing.T) {
 		"virtualization":  "docker",
 	})
 	assert.NilError(t, err)
-	peer.publish(t, fmt.Sprintf("nodes/%s/control/delete", nodeID), payload, 0)
+	peer.publish(t, fmt.Sprintf("nodes/%s/control/delete", nodeID), payload)
 
 	peer.expectNone(t, time.Second)
 }
@@ -249,7 +249,7 @@ func TestIntegration_MalformedDeploy_PublishesNothing(t *testing.T) {
 	startNodeEngineClient(t, host, port, nodeID, &fakeProvider{rt: &fakeRuntime{}})
 	peer := newPeer(t, host, port, nodeID)
 
-	peer.publish(t, fmt.Sprintf("nodes/%s/control/deploy", nodeID), []byte("not-json"), 0)
+	peer.publish(t, fmt.Sprintf("nodes/%s/control/deploy", nodeID), []byte("not-json"))
 
 	peer.expectNone(t, time.Second)
 }
@@ -283,7 +283,7 @@ func TestIntegration_ReportNodeInformation_MatchesContract(t *testing.T) {
 	}
 	ReportNodeInformation(node)
 
-	msg := peer.expect(t, fmt.Sprintf("nodes/%s/information", nodeID), 5*time.Second)
+	msg := peer.expect(t, fmt.Sprintf("nodes/%s/information", nodeID))
 	assert.Equal(t, msg.Qos(), byte(1))
 	assertJSONEqual(t, msg.Payload(), loadContract(t, "node_information.json"))
 }
@@ -300,7 +300,7 @@ func TestIntegration_ReportServiceResources_MatchesContract(t *testing.T) {
 		Sname: "app.ns.svc.inst", Runtime: "docker", Instance: 1, Status: "RUNNING",
 	}})
 
-	msg := peer.expect(t, fmt.Sprintf("nodes/%s/jobs/resources", nodeID), 5*time.Second)
+	msg := peer.expect(t, fmt.Sprintf("nodes/%s/jobs/resources", nodeID))
 	assert.Equal(t, msg.Qos(), byte(1))
 	assertJSONEqual(t, msg.Payload(), loadContract(t, "jobs_resources.json"))
 }
@@ -315,7 +315,7 @@ func TestIntegration_ControlErrorTopicNotSubscribed(t *testing.T) {
 
 	// NE never subscribes to control/error (only CM produces it, and
 	// nothing consumes it); publishing there must not trigger any handler.
-	peer.publish(t, fmt.Sprintf("nodes/%s/control/error", nodeID), []byte(`{"message":"ignored"}`), 0)
+	peer.publish(t, fmt.Sprintf("nodes/%s/control/error", nodeID), []byte(`{"message":"ignored"}`))
 
 	peer.expectNone(t, time.Second)
 	assert.Equal(t, len(provider.requestedTypes()), 0)
