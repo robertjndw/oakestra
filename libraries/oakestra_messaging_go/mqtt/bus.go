@@ -58,6 +58,8 @@ type Bus struct {
 	signal    chan struct{}
 }
 
+var _ messaging.Bus = (*Bus)(nil)
+
 // NewBus builds a Bus and its underlying paho client but does not connect.
 func NewBus(cfg Config) (*Bus, error) {
 	if cfg.BrokerURL == "" || cfg.BrokerPort == "" || cfg.ClientID == "" {

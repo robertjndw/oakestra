@@ -26,6 +26,8 @@ type Bus struct {
 	subscriptions []string
 }
 
+var _ messaging.Bus = (*Bus)(nil)
+
 // New creates a ready-to-use Bus. Connect still has to be called; Subscribe
 // works beforehand, matching the messaging.Bus contract.
 func New() *Bus {
